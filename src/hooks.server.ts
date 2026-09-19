@@ -2,6 +2,9 @@ import { getSession } from '$lib/server/auth';
 import { sequence } from '@sveltejs/kit/hooks';
 import { json, text, type Handle } from '@sveltejs/kit';
 
+const micropubPaths = ['/micropub', '/micropub/media'];
+const protocolPaths = ['/auth/indieauth/token', ...micropubPaths];
+
 /**
  * Helper to check content type
  */
@@ -52,31 +55,24 @@ function csrf(allowedPaths: string[]): Handle {
 }
 
 /**
- * CORS handler for IndieAuth token endpoint
- * Allows cross-origin requests as required by the IndieAuth spec
+ * Browser clients authenticate with protocol tokens, never cross-origin cookies.
+ * Expose Location so clients can read the URL of a created post or uploaded file.
  */
 const handleCors: Handle = async ({ event, resolve }) => {
-  // Allow CORS for IndieAuth token endpoint
-  if (event.url.pathname === '/auth/indieauth/token') {
-    // Handle preflight requests
-    if (event.request.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-        }
-      });
-    }
-  }
+  const isProtocolEndpoint = protocolPaths.includes(event.url.pathname);
+  const response =
+    isProtocolEndpoint && event.request.method === 'OPTIONS'
+      ? new Response(null, { status: 204 })
+      : await resolve(event);
 
-  const response = await resolve(event);
-
-  // Add CORS headers to IndieAuth token endpoint responses
-  if (event.url.pathname === '/auth/indieauth/token') {
+  if (isProtocolEndpoint) {
     response.headers.set('Access-Control-Allow-Origin', '*');
-    response.headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    response.headers.set(
+      'Access-Control-Allow-Methods',
+      event.url.pathname === '/micropub' ? 'GET, POST, OPTIONS' : 'POST, OPTIONS'
+    );
     response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    response.headers.set('Access-Control-Expose-Headers', 'Location');
   }
 
   return response;
@@ -87,6 +83,15 @@ const handleCors: Handle = async ({ event, resolve }) => {
  * Loads session data and exposes to event.locals
  */
 const handleSession: Handle = async ({ event, resolve }) => {
+  // Micropub requests from native clients may omit Origin. Such requests must
+  // still supply a token; only the same-origin editor may use session cookies.
+  if (
+    micropubPaths.includes(event.url.pathname) &&
+    event.request.headers.get('origin') !== event.url.origin
+  ) {
+    return resolve(event);
+  }
+
   // Load session data and expose to event.locals
   const session = await getSession(event);
 
@@ -97,4 +102,4 @@ const handleSession: Handle = async ({ event, resolve }) => {
 };
 
 // Combine handlers in sequence: CSRF with allowlist, CORS, then session
-export const handle = sequence(csrf(['/auth/indieauth/token']), handleCors, handleSession);
+export const handle = sequence(csrf(protocolPaths), handleCors, handleSession);

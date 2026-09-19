@@ -6,8 +6,8 @@ const config = {
   preprocess: vitePreprocess(),
   kit: {
     adapter: adapter(),
-    // hooks.server.ts applies SvelteKit's CSRF rule while exempting only the
-    // cross-origin IndieAuth token exchange required by the protocol.
+    // hooks.server.ts applies CSRF protection and allows cross-origin protocol
+    // requests without granting them access to editor session cookies.
     csrf: {
       trustedOrigins: ['*']
     }

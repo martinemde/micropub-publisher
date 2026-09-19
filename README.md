@@ -2,7 +2,7 @@
 
 A standalone Micropub, media, IndieAuth, and Markdown editor service backed by a user's GitHub OAuth authorization. The service has no repository credential of its own: each GitHub write uses the token granted by the person authorizing the Micropub client.
 
-This was extracted from `martinemde.com` at commit `964f9969d271`. The original conformance-tested routes and test suite are preserved, while `PUBLIC_APP_URL` and `PUBLIC_SITE_URL` allow the publisher and published site to use different origins.
+This was extracted from `martinemde.com` at commit `964f9969d271`. `PUBLIC_APP_URL` and `PUBLIC_SITE_URL` allow the publisher and published site to use different origins. The extracted routes have local tests, but hosted Micropub conformance has not been verified; see `TESTING_GUIDE.md` for the current gaps and test procedure.
 
 ## Routes
 
