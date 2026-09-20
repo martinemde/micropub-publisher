@@ -19,23 +19,29 @@
     description: string;
     categories: string;
     published: boolean;
+    publishedAt?: string;
     autoSlug: boolean;
     savedAt: string;
     currentPath: string;
   }
 
   // Form state
+  function localDateTime(date: Date): string {
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, -1);
+  }
+
   let title = $state('');
   let content = $state('');
   let slug = $state('');
   let description = $state('');
   let categories = $state('');
   let published = $state(false);
+  let publishedAt = $state(localDateTime(new Date()));
   let autoSlug = $state(true);
   let currentPath = $state(''); // Empty string means new post, otherwise path to existing post
 
   function postState() {
-    return { title, content, slug, description, categories, published, currentPath };
+    return { title, content, slug, description, categories, published, publishedAt, currentPath };
   }
 
   // Local draft backups are separate from the last loaded or submitted post.
@@ -70,6 +76,7 @@
         description = draft.description;
         categories = draft.categories;
         published = draft.published ?? false;
+        publishedAt = draft.publishedAt ?? localDateTime(new Date());
         autoSlug = draft.autoSlug;
         currentPath = draft.currentPath || '';
         lastSaved = new Date(draft.savedAt);
@@ -106,6 +113,7 @@
         description,
         categories,
         published,
+        publishedAt,
         autoSlug,
         currentPath,
         savedAt: new Date().toISOString()
@@ -179,6 +187,11 @@
       slug = frontmatter.slug || '';
       description = frontmatter.description || '';
       published = frontmatter.published ?? false;
+      const filenameDate = path
+        .split('/')
+        .pop()
+        ?.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+      publishedAt = localDateTime(new Date(frontmatter.date || filenameDate || Date.now()));
       categories = frontmatter.categories?.join(', ') || '';
       const originalContent = frontmatter.micropub?.properties?.content?.[0];
       content =
@@ -220,7 +233,7 @@
   // Auto-save when form fields change (debounced 1 second)
   $effect(() => {
     // Watch all form fields
-    const _ = [title, content, slug, description, categories, published, autoSlug];
+    const _ = [title, content, slug, description, categories, published, publishedAt, autoSlug];
 
     // Only back up changes that haven't been submitted.
     if (!hasUnsavedChanges()) return;
@@ -251,17 +264,7 @@
     const submittedPost = postState();
 
     try {
-      // Determine the date to use
-      let postDate: string;
-      if (currentPath) {
-        // Extract date from filename for existing posts
-        const filename = currentPath.split('/').pop()!;
-        const match = filename.match(/^(\d{4}-\d{2}-\d{2})-/);
-        postDate = match ? match[1] : new Date().toISOString().split('T')[0];
-      } else {
-        // New post - use current date
-        postDate = new Date().toISOString().split('T')[0];
-      }
+      const postDate = new Date(publishedAt).toISOString();
 
       const postUrl = currentPath
         ? `${data.siteUrl}/blog/${currentPath
@@ -299,7 +302,7 @@
         // Update currentPath if this was a new post
         if (!currentPath) {
           // Extract path from location or construct it
-          const datePrefix = postDate;
+          const datePrefix = postDate.slice(0, 10);
           const createdSlug = new URL(location).pathname.split('/').pop()!;
           if (slug === submittedPost.slug) slug = createdSlug;
           autoSlug = false;
@@ -525,6 +528,29 @@
             placeholder="Comma-separated (e.g., ruby, rails, web)"
             class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
           />
+        </div>
+
+        <div>
+          <label for="published-at" class="mb-2 block text-sm font-medium text-surface-700-300">
+            Publication date and time (local time)
+          </label>
+          <div class="flex items-center gap-2">
+            <input
+              type="datetime-local"
+              id="published-at"
+              bind:value={publishedAt}
+              required
+              step="any"
+              class="min-w-0 flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onclick={() => (publishedAt = localDateTime(new Date()))}
+              class="rounded-lg border border-surface-200-800 px-4 py-2 text-sm text-surface-700-300 hover:bg-surface-100-900"
+            >
+              Now
+            </button>
+          </div>
         </div>
 
         <div>

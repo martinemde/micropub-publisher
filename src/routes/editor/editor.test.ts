@@ -8,6 +8,7 @@ let editor: ReturnType<typeof mount>;
 afterEach(async () => {
   if (editor) await unmount(editor);
   document.body.replaceChildren();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -39,6 +40,7 @@ test.each([
           slug: 'existing',
           description: 'A description',
           published: true,
+          date: '2026-03-20T18:25:36.789Z',
           categories: ['ruby', 'web'],
           ...(original ? { micropub: { properties: { content: [original] } } } : {})
         }
@@ -68,12 +70,113 @@ test.each([
     expect(document.querySelector<HTMLInputElement>('#slug')?.value).toBe('existing');
     expect(document.querySelector<HTMLInputElement>('#description')?.value).toBe('A description');
     expect(document.querySelector<HTMLInputElement>('#categories')?.value).toBe('ruby, web');
+    expect(
+      new Date(document.querySelector<HTMLInputElement>('#published-at')!.value).toISOString()
+    ).toBe('2026-03-20T18:25:36.789Z');
     const published = [...document.querySelectorAll('label')].find((label) =>
       label.textContent?.includes('Published')
     );
     expect(published?.querySelector('input')?.checked).toBe(true);
     expect(document.querySelector('textarea')?.value).toBe(original ?? content);
     expect(document.querySelector('main')?.textContent).not.toContain('Failed to load post');
+  }
+);
+
+test.each(['unchanged', 'edited', 'now', 'new'])(
+  'submits the selected publication timestamp: %s',
+  async (scenario) => {
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    const originalDate = '2026-03-20T18:25:36.789Z';
+    const now = '2026-09-20T23:45:12.345Z';
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
+      if (input === '/api/posts') {
+        return Response.json([
+          {
+            filename: '2026-03-20-first.md',
+            path: 'src/content/blog/2026-03-20-first.md',
+            slug: 'first',
+            date: '2026-03-20'
+          }
+        ]);
+      }
+      if (input.startsWith('/api/posts/read?')) {
+        return Response.json({
+          content: 'Body',
+          frontmatter: { title: 'first', slug: 'first', date: originalDate }
+        });
+      }
+      expect(input).toBe('/micropub');
+      requests.push(JSON.parse(init!.body as string));
+      return new Response(null, {
+        status: 201,
+        headers: { Location: 'https://blog.example/blog/first' }
+      });
+    });
+    editor = mount(Editor, {
+      target: document.body,
+      props: { data: { isAuthenticated: true, siteUrl: 'https://blog.example', user: null } }
+    });
+    flushSync();
+    const postButton = () =>
+      [...document.querySelectorAll<HTMLButtonElement>('aside button')].find((button) =>
+        button.textContent?.includes('first')
+      )!;
+    await vi.waitFor(() => expect(postButton()).toBeDefined());
+    if (scenario !== 'new') {
+      postButton().click();
+      await vi.waitFor(() =>
+        expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('first')
+      );
+    } else {
+      for (const [selector, value] of [
+        ['#title', 'first'],
+        ['#content', 'Body']
+      ]) {
+        const field = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!;
+        field.value = value;
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      flushSync();
+    }
+    const input = document.querySelector<HTMLInputElement>('#published-at')!;
+    expect(input).not.toBeNull();
+    let expected = originalDate;
+    if (scenario === 'edited' || scenario === 'new') {
+      input.value = '2026-04-05T09:30:15.123';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      expected = new Date('2026-04-05T09:30:15.123').toISOString();
+    } else if (scenario === 'now') {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(now));
+      [...document.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.trim() === 'Now')!
+        .click();
+      flushSync();
+      vi.useRealTimers();
+      expected = now;
+    }
+    flushSync();
+    if (scenario !== 'unchanged') {
+      postButton().click();
+      expect(confirm).toHaveBeenCalledOnce();
+    }
+    document.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+    await vi.waitFor(() =>
+      expect(document.querySelector('main')?.textContent).toContain('successfully')
+    );
+    expect(requests).toEqual([
+      expect.objectContaining({
+        [scenario === 'new' ? 'properties' : 'replace']: expect.objectContaining({
+          published: [expected]
+        })
+      })
+    ]);
+    confirm.mockClear();
+    postButton().click();
+    expect(confirm).not.toHaveBeenCalled();
   }
 );
 
