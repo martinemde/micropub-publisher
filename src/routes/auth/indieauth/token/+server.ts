@@ -79,18 +79,15 @@ export const POST: RequestHandler = async ({ request }) => {
 
   // Generate and store access token
   // Token ID is returned to client, GitHub token is stored securely server-side
-  const accessToken = storeAccessToken(
-    authCode.githubToken,
-    authCode.me,
-    'create update' // Micropub scopes
-  );
+  const scope = authCode.scope ?? '';
+  const accessToken = storeAccessToken(authCode.githubToken, authCode.me, scope);
 
   // Return IndieAuth token response
   // CORS headers are added by the server hook
   return json({
     access_token: accessToken,
     token_type: 'Bearer',
-    scope: 'create update',
+    scope,
     me: authCode.me
   });
 };

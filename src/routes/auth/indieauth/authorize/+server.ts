@@ -28,6 +28,8 @@ export const GET: RequestHandler = async (event) => {
   const codeChallenge = url.searchParams.get('code_challenge');
   const codeChallengeMethod = url.searchParams.get('code_challenge_method');
   const responseType = url.searchParams.get('response_type');
+  // Grant only supported permissions explicitly requested by this client.
+  const scope = (url.searchParams.get('scope') || '').split(' ').includes('create') ? 'create' : '';
 
   // Validate required parameters
   if (!me || !clientId || !redirectUri || !state) {
@@ -122,6 +124,7 @@ export const GET: RequestHandler = async (event) => {
     ...session,
     oauthState,
     indieAuthRequest: {
+      scope,
       me,
       clientId,
       redirectUri,

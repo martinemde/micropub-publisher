@@ -6,7 +6,10 @@ Run `bun run test`, `bun run check`, `bun run lint`, and `bun run build`.
 Run `bun run test src/hooks.server.test.ts` for the protocol transport regression tests.
 
 The hook tests exercise the real hook chain, session sealing, token store, parsers,
-and endpoint handlers with the in-memory storage backend. SvelteKit's request
+and endpoint handlers. Transport tests use in-memory storage; authorization and
+action tests use the real GitHub storage backend with GitHub faked at its API
+boundary, asserting that rejected requests produce no writes. The complete
+authorization/callback/token/publish flow also verifies scope propagation. SvelteKit's request
 context is supplied by the harness, including conversion of endpoint HttpErrors
 to responses. This is not a deployed HTTP test or a hosted conformance result.
 The older Micropub endpoint tests mock parsing and storage and cannot demonstrate
@@ -35,21 +38,37 @@ These are code-review findings, not recorded passes from the hosted suite.
 - 104, 203–206 (photo URLs, alt text, nested objects): these properties are ignored.
 - 300–301 (inline multipart): unsupported at `/micropub`. A separate media
   endpoint is advertised; clients should upload there first.
-- 400–405, 500–503 (update/delete/undelete): unsupported. Worse, `action` is
-  ignored and these requests currently fall through to creating a post.
+- 400–405, 500–503 (update/delete/undelete): unsupported. Explicit actions
+  (including malformed values) now return 400 `invalid_request` without writes.
 - 600 (configuration): implemented, including the separate publisher origin.
   601 (`q=syndicate-to`) and 602–603 (`q=source`) are unsupported.
 - 700–702 (media): hook regressions cover authenticated JPEG/PNG/GIF requests.
-  Body-token authentication is missing on the media route. Validation errors
-  are caught and converted to 500 instead of retaining their 400/415 status.
+  Header/body tokens require `create` scope. Validation errors retain their
+  400/415 status instead of becoming 500 responses.
 - 800–804 (authentication): hook regressions cover header/body tokens and
-  rejection of missing/invalid tokens. Stored scopes and identity are not
-  checked by Micropub handlers. Authorization ignores the requested scope and
-  token issuance hardcodes `create update`.
+  rejection of missing/invalid tokens. Creation and uploads require the exact
+  `create` scope; configuration queries need only a valid token. Explicit tokens
+  take precedence over session cookies, so invalid/restricted tokens cannot
+  fall back to a more privileged session. Authorization grants only requested
+  `create` access and binds it to the sealed code; the token exchange cannot
+  broaden it. Missing scopes, including old authorization codes without a scope,
+  grant no publishing permission. Tokens issued before this change retain their
+  stored scopes until expiry, revocation, or restart. Stored identity is still
+  not rechecked by Micropub handlers.
 
-The next conformance slice should reject unsupported actions and enforce scopes
-before tackling create serialization and collision handling. Do not run the
-update/delete groups against real content while actions still fall through.
+The next conformance slice is create serialization and collision handling.
+Scope failures use HTTP 401 `insufficient_scope` with `scope: "create"`, as defined
+by [Micropub error responses](https://www.w3.org/TR/micropub/#error-response).
+
+## Next milestone after conformance
+
+Complete the existing Micropub media endpoint and support the stable publishing
+extensions `post-status`, `mp-slug`, and post-types discovery. Support h-entry
+properties `name`, `content`, `category`, `photo`, and `bookmark-of`.
+Do not add syndication, location, media queries, post-list queries, or other
+experimental extensions. Preserve the existing empty `syndicate-to` config field.
+Conformance work should respect these exclusions rather than implementing every
+optional feature tested by micropub.rocks.
 
 ## Credential boundary review
 

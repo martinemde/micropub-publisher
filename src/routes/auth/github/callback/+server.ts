@@ -65,6 +65,7 @@ export const GET: RequestHandler = async (event) => {
 
       // Generate authorization code for IndieAuth client
       const authCode = await createAuthCode({
+        scope: indieAuthReq.scope ?? '',
         githubToken: token,
         me: indieAuthReq.me,
         clientId: indieAuthReq.clientId,

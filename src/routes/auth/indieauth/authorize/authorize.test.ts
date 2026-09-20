@@ -309,6 +309,7 @@ describe('IndieAuth Authorization Endpoint Security', () => {
 
       const sessionData = setSessionSpy.mock.calls[0][1];
       expect(sessionData.indieAuthRequest).toEqual({
+        scope: '',
         me: 'https://example.com/',
         clientId: 'https://client.example.com/',
         redirectUri: 'https://client.example.com/callback',

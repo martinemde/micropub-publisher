@@ -13,6 +13,7 @@ export interface SessionData {
   githubToken?: string;
   oauthState?: string;
   indieAuthRequest?: {
+    scope?: string;
     me: string;
     clientId: string;
     redirectUri: string;
@@ -23,6 +24,7 @@ export interface SessionData {
 }
 
 export interface AuthCode {
+  scope?: string;
   githubToken: string;
   me: string;
   clientId: string;

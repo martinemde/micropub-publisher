@@ -378,12 +378,13 @@ describe('IndieAuth Token Endpoint', () => {
 
       expect(data).toHaveProperty('access_token');
       expect(data).toHaveProperty('token_type', 'Bearer');
-      expect(data).toHaveProperty('scope', 'create update');
+      expect(data).toHaveProperty('scope', '');
       expect(data).toHaveProperty('me', 'https://example.com/');
     });
 
     it('should issue tokens that can be used for micropub', async () => {
       const authCode = await createAuthCode({
+        scope: 'create',
         githubToken: 'github_token_123',
         me: 'https://example.com/',
         clientId: 'https://client.example.com/',
@@ -405,7 +406,7 @@ describe('IndieAuth Token Endpoint', () => {
       expect(tokenData).toBeTruthy();
       expect(tokenData?.githubToken).toBe('github_token_123');
       expect(tokenData?.me).toBe('https://example.com/');
-      expect(tokenData?.scope).toBe('create update');
+      expect(tokenData?.scope).toBe('create');
     });
   });
 

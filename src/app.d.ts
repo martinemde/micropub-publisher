@@ -2,6 +2,10 @@
 // for information about these interfaces
 declare global {
   namespace App {
+    interface Error {
+      error?: string;
+      scope?: string;
+    }
     interface Locals {
       user?: {
         id: number;

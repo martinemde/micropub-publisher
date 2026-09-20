@@ -7,53 +7,9 @@ import {
   generateCommitMessage
 } from '$lib/server/micropub';
 import { createStorageBackend } from '$lib/server/storage/factory';
-import { getAccessToken } from '$lib/server/token-store';
+import { requireMicropubToken } from '$lib/server/micropub-auth';
 import { requireEnvironmentVariable } from '$lib/server/env';
 import type { RequestHandler } from './$types';
-
-/**
- * Extract GitHub token from request
- * Supports:
- * - Session-based auth (locals.githubToken) for editor
- * - Bearer token in Authorization header (Micropub spec requirement)
- * - access_token in request body/query (Micropub spec requirement)
- */
-async function getGithubToken(
-  request: Request,
-  locals: App.Locals,
-  url?: URL
-): Promise<string | null> {
-  // Check session-based auth first (for editor)
-  if (locals.githubToken) {
-    return locals.githubToken;
-  }
-
-  // Check for Bearer token in Authorization header
-  const authHeader = request.headers.get('authorization');
-  if (authHeader?.startsWith('Bearer ')) {
-    const tokenId = authHeader.substring(7);
-    const token = getAccessToken(tokenId);
-
-    if (token) {
-      return token.githubToken;
-    }
-  }
-
-  // Check for access_token in query parameters (GET requests)
-  if (url) {
-    const queryToken = url.searchParams.get('access_token');
-    if (queryToken) {
-      const token = getAccessToken(queryToken);
-      if (token) {
-        return token.githubToken;
-      }
-    }
-  }
-
-  // Check for access_token in request body (POST requests)
-  // Note: We'll extract this in the handler since we need to read the body
-  return null;
-}
 
 /**
  * GET /micropub?q=config
@@ -62,11 +18,7 @@ async function getGithubToken(
 export const GET: RequestHandler = async ({ url, request, locals }) => {
   const query = url.searchParams.get('q');
 
-  // Require authentication for all queries (check Authorization header and query params)
-  const githubToken = await getGithubToken(request, locals, url);
-  if (!githubToken) {
-    error(401, 'Unauthorized');
-  }
+  requireMicropubToken(request, locals, url);
 
   if (query === 'config') {
     return json({
@@ -87,17 +39,26 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     // Parse request body first to check for access_token
     const contentType = request.headers.get('content-type') || '';
     let micropubRequest: Record<string, unknown>;
-    let bodyToken: string | null = null;
+    let bodyToken: unknown;
 
     if (contentType.includes('application/json')) {
-      micropubRequest = await request.json();
-      const jsonToken = micropubRequest.access_token;
-      bodyToken = typeof jsonToken === 'string' ? jsonToken : null;
+      try {
+        micropubRequest = await request.json();
+      } catch {
+        error(400, { message: 'Invalid JSON', error: 'invalid_request' });
+      }
+      if (
+        !micropubRequest ||
+        typeof micropubRequest !== 'object' ||
+        Array.isArray(micropubRequest)
+      ) {
+        error(400, { message: 'Expected a JSON object', error: 'invalid_request' });
+      }
+      bodyToken = micropubRequest.access_token;
     } else if (contentType.includes('application/x-www-form-urlencoded')) {
       const formData = await request.formData();
       micropubRequest = Object.fromEntries(formData);
-      const formToken = formData.get('access_token');
-      bodyToken = typeof formToken === 'string' ? formToken : null;
+      bodyToken = formData.get('access_token') ?? undefined;
     } else {
       error(
         415,
@@ -105,20 +66,14 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       );
     }
 
-    // Check authentication (session, Authorization header, query param, or body param)
-    let githubToken = await getGithubToken(request, locals, url);
+    const githubToken = requireMicropubToken(request, locals, url, bodyToken);
 
-    // If not authenticated via header/session/query, check body access_token
-    if (!githubToken && bodyToken) {
-      const token = getAccessToken(bodyToken);
-      if (token) {
-        githubToken = token.githubToken;
-      }
+    // Creation has no action parameter. Never interpret an unsupported or
+    // malformed action as a request to create content.
+    if (Object.hasOwn(micropubRequest, 'action') || Object.hasOwn(micropubRequest, 'action[]')) {
+      error(400, { message: 'Actions are not supported', error: 'invalid_request' });
     }
-
-    if (!githubToken) {
-      error(401, 'Unauthorized');
-    }
+    requireMicropubToken(request, locals, url, bodyToken, 'create');
 
     // Create storage backend
     const backend = createStorageBackend(githubToken);
