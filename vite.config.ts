@@ -3,6 +3,7 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  server: { port: 5180, strictPort: true },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   plugins: [tailwindcss(), sveltekit()] as any,
   test: {

@@ -20,8 +20,8 @@ bun install
 bun run dev
 ```
 
-For development, use a separate GitHub App with callback `http://localhost:5173/login/callback`.
-Set `PUBLIC_APP_URL` and `ORIGIN` to `http://localhost:5173`, `MICROPUB_BACKEND=file`,
+For development, use a separate GitHub App with callback `http://localhost:5180/login/callback`.
+Set `PUBLIC_APP_URL` and `ORIGIN` to `http://localhost:5180`, `MICROPUB_BACKEND=file`,
 and fill in the dev app's client ID and client secret in `.env`. The example file
 contains the production origins; override them before running locally.
 The configured GitHub user must have access to the selected publishing repository.
