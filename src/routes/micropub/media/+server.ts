@@ -17,6 +17,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       formData.get('access_token') ?? undefined,
       'create'
     );
+    if (githubToken instanceof Response) return githubToken;
     const backend = createStorageBackend(githubToken);
     const file = formData.get('file');
 

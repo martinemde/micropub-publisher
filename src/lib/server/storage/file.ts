@@ -1,3 +1,5 @@
+import { env } from '$env/dynamic/public';
+import { requireEnvironmentVariable } from '../env';
 import { writeFile, access, mkdir, readFile, readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { cwd } from 'node:process';
@@ -77,7 +79,7 @@ export class FileStorageBackend implements StorageBackend {
     await writeFile(absolutePath, buffer);
 
     // Return public URL (images in static/ are served at root)
-    const publicUrl = `/images/blog/${filename}`;
+    const publicUrl = `${requireEnvironmentVariable('PUBLIC_SITE_URL', env.PUBLIC_SITE_URL)}/images/blog/${filename}`;
     console.log(`[FileBackend] Uploaded image ${filename} (${mimeType}) → ${publicUrl}`);
 
     return publicUrl;

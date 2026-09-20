@@ -196,7 +196,7 @@ describe('FileStorageBackend', () => {
 
       const url = await backend.uploadImage(filename, buffer, 'image/jpeg');
 
-      expect(url).toBe(`/images/blog/${filename}`);
+      expect(url).toBe(`https://example.com/images/blog/${filename}`);
     });
 
     it('should create image file', async () => {

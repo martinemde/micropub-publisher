@@ -8,9 +8,14 @@ export function requireMicropubToken(
   url: URL,
   bodyToken?: unknown,
   requiredScope?: string
-): string {
+): string | Response {
   const header = request.headers.get('authorization');
   const queryToken = url.searchParams.get('access_token');
+  // RFC 6750 forbids supplying the token via more than one transport.
+  // An empty 400 body also avoids ambiguous OAuth error vocabulary.
+  if ([header !== null, queryToken !== null, bodyToken !== undefined].filter(Boolean).length > 1) {
+    return new Response(null, { status: 400 });
+  }
   let tokenId: string | null;
 
   if (header !== null) {

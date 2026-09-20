@@ -156,8 +156,8 @@ describe('Micropub authorization and actions', () => {
       },
       true
     );
-    expect(response.status).toBe(401);
-    expect(await response.json()).toMatchObject({ error: 'insufficient_scope' });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe('');
   });
 
   it('does not fall back from an invalid header token to the editor session', async () => {
@@ -170,7 +170,7 @@ describe('Micropub authorization and actions', () => {
       },
       true
     );
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(400);
   });
 
   it.each(['null', '[]', '"not an object"', '{'])('rejects malformed JSON %s', async (body) => {

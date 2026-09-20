@@ -18,7 +18,8 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ url, request, locals }) => {
   const query = url.searchParams.get('q');
 
-  requireMicropubToken(request, locals, url);
+  const authentication = requireMicropubToken(request, locals, url);
+  if (authentication instanceof Response) return authentication;
 
   if (query === 'config') {
     return json({
@@ -67,6 +68,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     }
 
     const githubToken = requireMicropubToken(request, locals, url, bodyToken);
+    if (githubToken instanceof Response) return githubToken;
 
     // Creation has no action parameter. Never interpret an unsupported or
     // malformed action as a request to create content.
