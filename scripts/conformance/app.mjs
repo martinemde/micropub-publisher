@@ -9,6 +9,7 @@ for (const file of [
   'src',
   'static',
   'svelte.config.js',
+  'scripts/cloudflare-adapter.mjs',
   'vite.config.ts',
   'tsconfig.json',
   'package.json'

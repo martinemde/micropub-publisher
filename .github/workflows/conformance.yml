@@ -21,6 +21,7 @@ jobs:
       - run: bun run lint
       - run: bun run test
       - run: bun run build
+      - run: bun run test:cloudflare
       - run: bun run conformance:setup
       - run: bun test scripts/conformance/harness.test.mjs
       - run: bun run conformance

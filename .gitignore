@@ -17,6 +17,8 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+.dev.vars
+.dev.vars.*
 !.env.example
 
 # Vite

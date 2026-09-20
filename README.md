@@ -15,14 +15,14 @@ This was extracted from `martinemde.com` at commit `964f9969d271`. `PUBLIC_APP_U
 ## Run locally
 
 ```sh
-cp .env.example .env
+cp .env.example .env.local
 bun install
 bun run dev
 ```
 
 For development, use a separate GitHub App with callback `http://localhost:5180/login/callback`.
-Set `PUBLIC_APP_URL` and `ORIGIN` to `http://localhost:5180`, `MICROPUB_BACKEND=file`,
-and fill in the dev app's client ID and client secret in `.env`. The example file
+Set `PUBLIC_APP_URL` to `http://localhost:5180`, `MICROPUB_BACKEND=file`,
+and fill in the dev app's client ID and client secret in `.env.local`. The example file
 contains the production origins; override them before running locally.
 The configured GitHub user must have access to the selected publishing repository.
 
@@ -63,21 +63,58 @@ expiration enabled. Webhooks, device flow, an app private key, and installation
 access tokens are not used. User authorization is requested when signing in to the
 editor or authorizing a Micropub client.
 
-Set the app's **client ID** (not App ID) and client secret as `GITHUB_CLIENT_ID` and
-`GITHUB_CLIENT_SECRET`, and set `GITHUB_OWNER`, `GITHUB_REPO`, and a fresh
-`SESSION_SECRET`. Set both `PUBLIC_APP_URL` and the adapter's `ORIGIN` to
-`https://publish.martinemde.com`, and `PUBLIC_SITE_URL=https://martinemde.com`.
-Configure HTTPS forwarding to the service port on your host.
+Cloudflare Workers runs the service, with a SQLite-backed Durable Object owning
+GitHub credentials, Micropub tokens, and consumed authorization codes. Requests
+to the application are serialized through that object, including GitHub writes
+and token refreshes. Explicit map mutations write durable storage; credentials
+survive eviction and deployment. Vite development and local conformance use
+isolated in-memory stores. Cloudflare requests fail closed without durable state.
 
-Build and run this as one long-lived Bun or Node process:
+`wrangler.jsonc` fixes the production origins and publishing repository
+`martinemde/martinemde.com`. The sibling `../cloudflare` repo manages the custom
+domain; Wrangler manages the Worker, assets, Durable Object migration, and secrets.
+Worker preview URLs and request logging are disabled.
+
+Keep production secrets in ignored `.env.production.local`, separate from dev's
+`.env.local`. It must contain `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and a
+fresh random `SESSION_SECRET` of at least 32 characters. Use the production GitHub
+App's **client ID**, not App ID. Do not copy the dev credentials. Keep the session
+secret stable across deployments to preserve cookies and authorization codes.
+
+Verify locally before deployment:
 
 ```sh
 bun run build
-bun run start
+bun run test:cloudflare
+bun run conformance
 ```
 
-Set `MICROPUB_BACKEND=github` and `BODY_SIZE_LIMIT=12M` in production. The body limit
-allows a 10 MiB image plus multipart overhead; see the [adapter configuration](https://svelte.dev/docs/kit/adapter-node#Environment-variables-BODY_SIZE_LIMIT). GitHub user credentials, Micropub tokens, and authorization-code replay state remain in memory. User tokens refresh automatically; expired/revoked refresh credentials require signing in again. A restart invalidates editor sessions and issued Micropub tokens, and multiple replicas would not share them; use one process until those stores are replaced with a durable implementation.
+`test:cloudflare` bundles with Wrangler's dry run, then runs the actual Worker in
+Miniflare with fake external services. It verifies login, GitHub user-token refresh,
+Micropub token issuance, restart persistence, code replay rejection, and logout
+revocation surviving another restart. It never uses real credentials or GitHub.
+
+For the initial deployment, authenticate Wrangler and run:
+
+```sh
+bun run build
+bunx wrangler deploy --secrets-file .env.production.local
+```
+
+That file must contain only the three secret values; public origins and repository
+settings belong in `wrangler.jsonc`. Never put secrets in command arguments. A Worker
+must exist before OpenTofu can attach its custom domain. In `../cloudflare`, run
+`make plan`, review the publisher domain addition, then `make apply`.
+Subsequent code deployments use `bun run deploy` without rotating secrets or
+reapplying unchanged infrastructure. Verify HTTPS and the login redirect at
+`https://publish.martinemde.com/auth/github/login`, then complete a real login
+before considering deployment verified. Micropub clients also need the identity
+links shown above on the blog.
+
+The media endpoint enforces its own 10 MiB file limit. Adapter-node's `ORIGIN` and
+`BODY_SIZE_LIMIT` settings do not apply to Workers. Expired/revoked GitHub refresh
+credentials still require signing in again. Token revocation deletes the live
+record; Cloudflare's storage recovery retention can retain historical data.
 
 See `MICROPUB_SETUP.md`, `INDIEAUTH_IMPLEMENTATION.md`, and `TESTING_GUIDE.md` for the recovered implementation details. `OAUTH_SECURITY_ANALYSIS.md` records the original audit and the fixes made before extraction.
 
@@ -87,8 +124,8 @@ The new cookie name invalidates legacy OAuth sessions. Revoke the old OAuth App'
 GitHub authorization when retiring it; changing this service does not revoke old
 GitHub tokens remotely. The old `/auth/github/callback` route remains an alias.
 
-This is local deployment preparation. DNS, HTTPS, app installation, secrets, and the
-live authorization flow must still be configured and verified on the host.
+DNS, HTTPS, app installation, secrets, and the live authorization flow must be
+verified separately from these local checks.
 
 When installation starts on GitHub with user authorization enabled, the first
 callback can lack our state/PKCE. The publisher discards that code and starts a

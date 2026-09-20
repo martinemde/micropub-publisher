@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "micropub-publisher",
+  "account_id": "9c275e0c035e53370143e8cf240dfb3f",
+  "main": ".svelte-kit/cloudflare/_worker.js",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".svelte-kit/cloudflare",
+    "binding": "ASSETS"
+  },
+  "workers_dev": false,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [{ "name": "PUBLISHER", "class_name": "Publisher" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Publisher"] }],
+  "vars": {
+    "PUBLIC_APP_URL": "https://publish.martinemde.com",
+    "PUBLIC_SITE_URL": "https://martinemde.com",
+    "GITHUB_OWNER": "martinemde",
+    "GITHUB_REPO": "martinemde.com",
+    "MICROPUB_BACKEND": "github",
+    "PUBLISHER_RUNTIME": "cloudflare"
+  },
+  "observability": { "enabled": false }
+}
