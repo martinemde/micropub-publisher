@@ -1,6 +1,7 @@
 import { error, isHttpError } from '@sveltejs/kit';
 import { createStorageBackend } from '$lib/server/storage/factory';
 import { requireMicropubToken } from '$lib/server/micropub-auth';
+import { uploadPhoto } from '$lib/server/micropub-media';
 import type { RequestHandler } from './$types';
 
 /**
@@ -9,7 +10,14 @@ import type { RequestHandler } from './$types';
  */
 export const POST: RequestHandler = async ({ request, locals, url }) => {
   try {
-    const formData = await request.formData();
+    if (!request.headers.get('content-type')?.includes('multipart/form-data'))
+      error(415, 'Expected multipart/form-data');
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      error(400, 'Invalid multipart body');
+    }
     const githubToken = requireMicropubToken(
       request,
       locals,
@@ -20,22 +28,13 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     if (githubToken instanceof Response) return githubToken;
     const backend = createStorageBackend(githubToken);
     const file = formData.get('file');
+    if (formData.getAll('file').length !== 1) error(400, 'Expected one file');
 
     if (!file || typeof file === 'string') {
       error(400, 'No file provided');
     }
 
-    // Validate file is an image
-    if (!file.type.startsWith('image/')) {
-      error(415, 'File must be an image');
-    }
-
-    // Convert file to buffer
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Upload via storage backend
-    const imageUrl = await backend.uploadImage(file.name, buffer, file.type);
+    const imageUrl = await uploadPhoto(backend, file);
 
     // Return 201 Created with Location header
     return new Response(null, {

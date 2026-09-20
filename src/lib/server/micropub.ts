@@ -35,7 +35,7 @@ export function invalid(message: string): never {
 export function normalizeProperties(input: Record<string, unknown>): MicropubProperties {
   return Object.fromEntries(
     Object.entries(input)
-      .filter(([key]) => !reserved.has(key) && !key.startsWith('mp-'))
+      .filter(([key]) => !reserved.has(key) && (!key.startsWith('mp-') || key === 'mp-slug'))
       .map(([key, value]) => [key, Array.isArray(value) ? value : [value]])
   );
 }
@@ -79,8 +79,29 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
     invalid('Only h-entry is supported');
   if (request.h !== undefined && request.h !== 'entry') invalid('Only h-entry is supported');
   const properties = normalizeProperties(request.properties ?? request);
+  for (const key of [
+    'name',
+    'category',
+    'published',
+    'slug',
+    'mp-slug',
+    'description',
+    'post-status',
+    'bookmark-of'
+  ]) {
+    if (properties[key]?.some((value) => typeof value !== 'string')) invalid(`Invalid ${key}`);
+  }
+  const postStatus = first(properties, 'post-status', 'published');
+  if (!['published', 'draft'].includes(postStatus) || (properties['post-status']?.length ?? 0) > 1)
+    invalid('Invalid post-status');
   const title = first(properties, 'name', 'Untitled Post');
-  const rawSlug = first(properties, 'slug');
+  const suggestedSlug = first(properties, 'mp-slug');
+  const rawSlug = suggestedSlug
+    ? suggestedSlug
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+    : first(properties, 'slug');
   const slug =
     rawSlug ||
     title
@@ -100,12 +121,23 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
   }
   const photos = (properties.photo ?? []).map(photoMarkup);
   if (photos.length) content += `\n\n${photos.join('\n\n')}`;
+  for (const bookmark of properties['bookmark-of'] ?? []) {
+    let url: URL;
+    try {
+      url = new URL(bookmark as string);
+    } catch {
+      invalid('Bookmark URL must be absolute');
+    }
+    if (!['http:', 'https:'].includes(url.protocol)) invalid('Invalid bookmark URL scheme');
+    const href = escapeAttribute(bookmark as string);
+    content += `\n\n<a class="u-bookmark-of" href="${href}">${href}</a>`;
+  }
   return {
     title,
     content,
     slug,
     date,
-    published: first(properties, 'post-status', 'published') === 'published',
+    published: postStatus === 'published',
     description: first(properties, 'description') || undefined,
     author: requireEnvironmentVariable('GITHUB_OWNER', env.GITHUB_OWNER),
     categories: properties.category?.filter((value): value is string => typeof value === 'string'),

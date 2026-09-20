@@ -20,7 +20,8 @@ vi.mock('$lib/server/micropub', () => ({
     slug: req.slug || req.properties?.slug?.[0] || 'test-post',
     published: true,
     date: new Date(),
-    author: 'Test Author'
+    author: 'Test Author',
+    properties: {}
   })),
   generateMarkdownFile: vi.fn(() => '# Test Post\n\nTest content'),
   generateFilePath: vi.fn(() => 'src/content/blog/2025-01-01-test-post.md'),
@@ -136,7 +137,13 @@ describe('Micropub GET Endpoint', () => {
 
       expect(data).toEqual({
         'media-endpoint': 'https://publisher.example.com/micropub/media',
-        'syndicate-to': []
+        'syndicate-to': [],
+        'post-types': [
+          { type: 'note', name: 'Note' },
+          { type: 'article', name: 'Article' },
+          { type: 'photo', name: 'Photo' },
+          { type: 'bookmark', name: 'Bookmark' }
+        ]
       });
     });
   });

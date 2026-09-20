@@ -116,6 +116,7 @@ export async function mutatePost(backend: StorageBackend, request: Record<string
   const post = parseMicropubRequest({ properties });
   // Updating properties does not relocate an existing permalink or file.
   post.slug = slug;
+  if (post.properties['mp-slug']) post.properties['mp-slug'] = [slug];
   await backend.createOrUpdateFile(
     file.path,
     generateMarkdownFile(post),

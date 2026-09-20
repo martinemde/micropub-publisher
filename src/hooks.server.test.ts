@@ -301,7 +301,9 @@ describe('Micropub transport through server hooks', () => {
       body
     });
     expect(response.status).toBe(201);
-    expect(response.headers.get('Location')).toBe(`/test-images/photo.${format}`);
+    expect(response.headers.get('Location')).toMatch(
+      new RegExp(`^/test-images/[a-f0-9-]+\\.${format === 'jpeg' ? 'jpg' : format}$`)
+    );
     expect(response.headers.get('Access-Control-Expose-Headers')).toBe('Location');
   });
 
@@ -331,7 +333,13 @@ describe('Micropub transport through server hooks', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
     expect(await response.json()).toEqual({
       'media-endpoint': `${publisher}/micropub/media`,
-      'syndicate-to': []
+      'syndicate-to': [],
+      'post-types': [
+        { type: 'note', name: 'Note' },
+        { type: 'article', name: 'Article' },
+        { type: 'photo', name: 'Photo' },
+        { type: 'bookmark', name: 'Bookmark' }
+      ]
     });
   });
 
@@ -561,4 +569,145 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
       expect((await send({ action: 'update', url, ...operation }, editor)).status).toBe(400);
     }
   });
+});
+
+describe('Publishing workflow extensions', () => {
+  beforeEach(() => {
+    env.MICROPUB_BACKEND = 'github';
+  });
+  it.each(['form', 'json'])(
+    'creates a draft bookmark with an mp-slug via %s and publishes it by update',
+    async (encoding) => {
+      const props = {
+        name: ['Useful reference'],
+        content: ['Read this'],
+        category: ['reading'],
+        'bookmark-of': ['https://example.org/page?a=1&b=2'],
+        'mp-slug': ['My Bookmark'],
+        'post-status': ['draft']
+      };
+      const body =
+        encoding === 'json'
+          ? JSON.stringify({ type: ['h-entry'], properties: props })
+          : new URLSearchParams(
+              Object.fromEntries(Object.entries(props).map(([key, value]) => [key, value[0]]))
+            );
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        'Content-Type':
+          encoding === 'json' ? 'application/json' : 'application/x-www-form-urlencoded'
+      };
+      const { response } = await request('/micropub', { method: 'POST', headers, body });
+      expect(response.status).toBe(201);
+      expect(response.headers.get('Location')).toBe('https://example.com/blog/my-bookmark');
+      const source = matter(Buffer.from([...githubWrites.values()][0], 'base64').toString());
+      expect(source.data.published).toBe(false);
+      expect(source.data.micropub.properties).toEqual({ ...props, 'mp-slug': ['my-bookmark'] });
+      expect(source.content.trim()).toBe(
+        'Read this\n\n<a class="u-bookmark-of" href="https://example.org/page?a=1&amp;b=2">https://example.org/page?a=1&amp;b=2</a>'
+      );
+      const editor = storeAccessToken('fake', 'https://example.com/', 'update');
+      const updated = await request('/micropub', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${editor}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update',
+          url: response.headers.get('Location'),
+          replace: { 'post-status': ['published'] }
+        })
+      });
+      expect(updated.response.status).toBe(204);
+      expect(
+        matter(Buffer.from([...githubWrites.values()][0], 'base64').toString()).data.published
+      ).toBe(true);
+    }
+  );
+  it.each([
+    { 'post-status': ['private'] },
+    { 'post-status': [null] },
+    { 'post-status': ['draft', 'published'] },
+    { 'bookmark-of': ['javascript:alert(1)'] },
+    { photo: ['data:image/svg+xml,bad'] },
+    { category: [{}] }
+  ])('rejects invalid supported properties %j without writes', async (properties) => {
+    const { response } = await request('/micropub', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: ['h-entry'], properties })
+    });
+    expect(response.status).toBe(400);
+  });
+  it('isolates repeated media filenames and derives safe paths from media types', async () => {
+    const locations = [];
+    for (const bytes of ['first image', 'second image']) {
+      const body = new FormData();
+      body.set('file', new File([bytes], '../../overwrite.html', { type: 'image/png' }));
+      const { response } = await request('/micropub/media', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body
+      });
+      expect(response.status).toBe(201);
+      locations.push(response.headers.get('Location'));
+    }
+    expect(new Set(locations).size).toBe(2);
+    expect(
+      [...githubWrites.keys()].every((path) => /^static\/images\/blog\/[a-f0-9-]+\.png$/.test(path))
+    ).toBe(true);
+    expect(
+      [...githubWrites.values()].map((value) => Buffer.from(value, 'base64').toString())
+    ).toEqual(['first image', 'second image']);
+  });
+  it.each(['empty', 'too-big', 'svg', 'multiple'])(
+    'rejects %s uploads without writes',
+    async (kind) => {
+      const body = new FormData();
+      const bytes =
+        kind === 'empty' ? '' : kind === 'too-big' ? new Uint8Array(10 * 1024 * 1024 + 1) : 'image';
+      body.append(
+        'file',
+        new File([bytes], 'photo.png', { type: kind === 'svg' ? 'image/svg+xml' : 'image/png' })
+      );
+      if (kind === 'multiple')
+        body.append('file', new File(['second'], 'second.png', { type: 'image/png' }));
+      const { response } = await request('/micropub/media', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body
+      });
+      expect(response.status).toBe(kind === 'too-big' ? 413 : kind === 'svg' ? 415 : 400);
+    }
+  );
+  it.each(['media', 'source', 'post-list', 'location'])(
+    'does not expose the excluded %s query',
+    async (q) => {
+      const { response } = await request(`/micropub?q=${q}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      expect(response.status).toBe(400);
+    }
+  );
+});
+
+it('keeps concurrent creates from overwriting the same slug', async () => {
+  env.MICROPUB_BACKEND = 'github';
+  const responses = await Promise.all(
+    ['first', 'second', 'third'].map((content) =>
+      request('/micropub', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ properties: { content: [content], 'mp-slug': ['same-slug'] } })
+      })
+    )
+  );
+  expect(responses.every(({ response }) => response.status === 201)).toBe(true);
+  expect(new Set(responses.map(({ response }) => response.headers.get('Location'))).size).toBe(3);
+  expect(
+    [...githubWrites.values()]
+      .map(
+        (value) =>
+          matter(Buffer.from(value, 'base64').toString()).data.micropub.properties.content[0]
+      )
+      .sort()
+  ).toEqual(['first', 'second', 'third']);
 });

@@ -12,6 +12,7 @@ import { createStorageBackend } from '$lib/server/storage/factory';
 import { requireMicropubToken } from '$lib/server/micropub-auth';
 import { requireEnvironmentVariable } from '$lib/server/env';
 import { findPost, mutatePost, postSlug } from '$lib/server/micropub-posts';
+import { uploadPhoto, validatePhoto } from '$lib/server/micropub-media';
 import type { RequestHandler } from './$types';
 
 /**
@@ -27,7 +28,13 @@ export const GET: RequestHandler = async ({ url, request, locals }) => {
   if (query === 'config') {
     return json({
       'media-endpoint': `${requireEnvironmentVariable('PUBLIC_APP_URL', env.PUBLIC_APP_URL)}/micropub/media`,
-      'syndicate-to': []
+      'syndicate-to': [],
+      'post-types': [
+        { type: 'note', name: 'Note' },
+        { type: 'article', name: 'Article' },
+        { type: 'photo', name: 'Photo' },
+        { type: 'bookmark', name: 'Bookmark' }
+      ]
     });
   }
 
@@ -52,6 +59,17 @@ export const GET: RequestHandler = async ({ url, request, locals }) => {
  * POST /micropub
  * Create a new blog post
  */
+// Token/session state already requires one process. Serialize mutations in that
+// process so slug allocation and read-modify-write updates cannot race.
+let postWrites: Promise<void> = Promise.resolve();
+function serializeWrite<T>(write: () => Promise<T>): Promise<T> {
+  const result = postWrites.then(write);
+  postWrites = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
 export const POST: RequestHandler = async ({ request, locals, url }) => {
   try {
     // Parse request body first to check for access_token
@@ -77,7 +95,12 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       contentType.includes('application/x-www-form-urlencoded') ||
       contentType.includes('multipart/form-data')
     ) {
-      const formData = await request.formData();
+      let formData: FormData;
+      try {
+        formData = await request.formData();
+      } catch {
+        invalid('Invalid form body');
+      }
       micropubRequest = Object.create(null);
       for (const [field, value] of formData) {
         const key = field.endsWith('[]') ? field.slice(0, -2) : field;
@@ -107,63 +130,65 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       if (action === 'update' && !contentType.includes('application/json'))
         invalid('Updates require JSON');
       requireMicropubToken(request, locals, url, bodyToken, action);
-      await mutatePost(createStorageBackend(githubToken), micropubRequest);
+      await serializeWrite(() => mutatePost(createStorageBackend(githubToken), micropubRequest));
       return new Response(null, { status: 204 });
     }
     requireMicropubToken(request, locals, url, bodyToken, 'create');
 
-    // Create storage backend
-    const backend = createStorageBackend(githubToken);
+    return await serializeWrite(async () => {
+      // Create storage backend
+      const backend = createStorageBackend(githubToken);
 
-    // File uploads are allowed only for the photo property. Store their public
-    // URLs, never File objects or authentication fields, in the post source.
-    for (const [key, value] of Object.entries(micropubRequest)) {
-      const values = Array.isArray(value) ? value : [value];
-      if (!values.some((item) => item instanceof File)) continue;
-      if (key !== 'photo') invalid('Only photo uploads are supported');
-      micropubRequest[key] = await Promise.all(
-        values.map(async (item) => {
-          if (!(item instanceof File)) return item;
-          if (!item.type.startsWith('image/')) error(415, 'File must be an image');
-          const filename = `${crypto.randomUUID()}-${item.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`;
-          return backend.uploadImage(filename, Buffer.from(await item.arrayBuffer()), item.type);
-        })
-      );
-    }
-
-    // Parse Micropub request to blog post data
-    const post = parseMicropubRequest(micropubRequest);
-
-    const usedSlugs = new Set((await backend.listBlogPosts()).map((file) => file.slug));
-    const requestedSlug = post.slug;
-    while (
-      usedSlugs.has(post.slug) ||
-      (await backend.fileExists(`.micropub/deleted/${post.slug}.json`))
-    ) {
-      post.slug = `${requestedSlug}-${crypto.randomUUID()}`;
-    }
-
-    // Generate file path and content
-    const filePath = generateFilePath(post);
-    const content = generateMarkdownFile(post);
-
-    // Check if file already exists
-    const exists = await backend.fileExists(filePath);
-    if (exists) error(409, 'Post already exists');
-
-    // Create or update file via storage backend
-    const commitMessage = generateCommitMessage(post, exists);
-    await backend.createOrUpdateFile(filePath, content, commitMessage);
-
-    // Return 201 Created with Location header
-    const siteUrl = requireEnvironmentVariable('PUBLIC_SITE_URL', env.PUBLIC_SITE_URL);
-    const postUrl = `${siteUrl}/blog/${post.slug}`;
-    return new Response(null, {
-      status: 201,
-      headers: {
-        Location: postUrl,
-        'Content-Type': 'application/json'
+      // File uploads are allowed only for the photo property. Store their public
+      // URLs, never File objects or authentication fields, in the post source.
+      for (const [key, value] of Object.entries(micropubRequest)) {
+        const values = Array.isArray(value) ? value : [value];
+        if (!values.some((item) => item instanceof File)) continue;
+        if (key !== 'photo') invalid('Only photo uploads are supported');
+        for (const item of values) if (item instanceof File) validatePhoto(item);
+        micropubRequest[key] = await Promise.all(
+          values.map(async (item) => {
+            if (!(item instanceof File)) return item;
+            return uploadPhoto(backend, item);
+          })
+        );
       }
+
+      // Parse Micropub request to blog post data
+      const post = parseMicropubRequest(micropubRequest);
+
+      const usedSlugs = new Set((await backend.listBlogPosts()).map((file) => file.slug));
+      const requestedSlug = post.slug;
+      while (
+        usedSlugs.has(post.slug) ||
+        (await backend.fileExists(`.micropub/deleted/${post.slug}.json`))
+      ) {
+        post.slug = `${requestedSlug}-${crypto.randomUUID()}`;
+      }
+      if (post.properties['mp-slug']) post.properties['mp-slug'] = [post.slug];
+
+      // Generate file path and content
+      const filePath = generateFilePath(post);
+      const content = generateMarkdownFile(post);
+
+      // Check if file already exists
+      const exists = await backend.fileExists(filePath);
+      if (exists) error(409, 'Post already exists');
+
+      // Create or update file via storage backend
+      const commitMessage = generateCommitMessage(post, exists);
+      await backend.createOrUpdateFile(filePath, content, commitMessage);
+
+      // Return 201 Created with Location header
+      const siteUrl = requireEnvironmentVariable('PUBLIC_SITE_URL', env.PUBLIC_SITE_URL);
+      const postUrl = `${siteUrl}/blog/${post.slug}`;
+      return new Response(null, {
+        status: 201,
+        headers: {
+          Location: postUrl,
+          'Content-Type': 'application/json'
+        }
+      });
     });
   } catch (err) {
     // Re-throw SvelteKit HttpErrors (auth failures, content type errors, etc.)
