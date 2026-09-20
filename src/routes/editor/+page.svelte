@@ -454,11 +454,7 @@
       <aside
         class="h-[400px] overflow-hidden rounded-lg border border-surface-200-800 bg-surface-50-950 p-4 lg:h-[calc(100vh-12rem)]"
       >
-        <BlogPostList
-          onSelectPost={handleSelectPost}
-          {currentPath}
-          hasDraft={!!localStorage.getItem?.(STORAGE_KEY) && browser}
-        />
+        <BlogPostList onSelectPost={handleSelectPost} {currentPath} hasDraft={lastSaved !== null} />
       </aside>
     {/if}
 

@@ -115,3 +115,33 @@ test('802 uses body-only authentication for creation and header authentication f
   });
   expect(result.status).toBe('pass');
 });
+
+test('server renders the signed-in editor without browser storage', async () => {
+  const { createServer } = await import('vite');
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const directory = await mkdtemp(`${tmpdir()}/publisher-editor-test-`);
+  const vite = await createServer({
+    envDir: directory,
+    server: { middlewareMode: true, ws: false },
+    logLevel: 'error'
+  });
+  try {
+    const { default: Editor } = await vite.ssrLoadModule('/src/routes/editor/+page.svelte');
+    const { render } = await vite.ssrLoadModule('svelte/server');
+    const result = render(Editor, {
+      props: {
+        data: {
+          isAuthenticated: true,
+          siteUrl: 'https://example.com',
+          user: { id: 1, login: 'test-user', name: 'Test User', avatar_url: '' }
+        }
+      }
+    });
+    expect(result.body).toContain('Logout');
+    expect(result.body).toContain('Blog Posts');
+  } finally {
+    await vite.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30000);
