@@ -26,7 +26,7 @@ checks both passing and deliberately failing responses and pending manual checks
 Each run copies the app into `.conformance/runs/<timestamp>/app/`, without `.env`,
 and starts it with an allowlisted environment, the file storage backend, and fake
 GitHub credentials. The runner seeds the real in-memory token store through Vite's
-server module loader with create-scoped and unscoped tokens; no test authentication
+server module loader with create/update/delete/undelete-scoped and unscoped tokens; no test authentication
 route or bypass is added to the shipped app. App fetches to external hosts are
 blocked, and the suite transport allows only its two local origins without
 following redirects. The standalone fixture origin represents the published site
@@ -34,9 +34,8 @@ for uploaded media; it does not implement the real blog's post rendering.
 
 Each case saves its requests/responses, assertion HTML, and a snapshot of generated
 Markdown. Reports redact the ephemeral tokens. `summary.json` contains the full
-results; `.conformance/latest.json` points to the latest run. The runner never
-clicks upstream's manual confirmation controls. Pending content checks remain
-pending, and must be inspected against the actual blog before claiming conformance.
+results; `.conformance/latest.json` points to the latest run. The runner confirms manual checks only after successful file-backed judgments.
+Unresolved checks remain pending; deployed blog rendering is verified separately.
 A successful creation status alone does not prove correct publication or content.
 
 Exit codes are 0 when all selected cases pass, 1 for failed or pending checks, and
@@ -142,17 +141,24 @@ serialization.
 
 ## Credential boundary review
 
-The publisher uses a user-authorized GitHub token for the configured repository;
-Micropub clients receive an opaque token ID. The editor session contains the
-GitHub token encrypted in an HttpOnly cookie, while protocol-token mappings live
-in server memory. Restarting the single process invalidates those mappings.
+The publisher now uses GitHub App user authorization with state and S256 PKCE,
+requesting no broad OAuth scope. The configured GitHub App must have Contents
+read/write on selected repositories. Authorization-code exchange and refresh use
+only the app client ID/secret; no installation token or private key is used.
 
-A separate origin isolates this service from blog runtime code, but the GitHub
-OAuth request still asks for broad `repo` scope. It is not a repository-scoped
-credential. Raw error logging in publishing and OAuth paths needs review before
-relying on logs to be credential-free. Post slugs and media names are now constrained; the editor API read
-paths still need canonical path validation; the file backend's `join` does not
-confine traversal to its intended content directory.
+GitHub access and rotating refresh tokens live in server memory, referenced by
+opaque IDs in encrypted editor cookies and IndieAuth authorization codes. Refresh
+is shared by editor and protocol clients, and simultaneous refresh attempts share
+one request. Logout removes the credential and its Micropub tokens; failed refresh
+requires reauthorization. Restart loses all these sessions. Legacy OAuth cookies
+are invalidated by the new cookie name; remote OAuth authorization must be revoked
+separately when retiring the old app.
+
+Boundary tests cover the production callback, absence of OAuth scope, PKCE,
+refresh, logout after rotation, and rejected refresh without writes or secret logs.
+OAuth, publishing, media, and editor API error logging no longer dumps raw GitHub
+error objects. Editor API read paths still need canonical path validation; the
+file backend's `join` does not confine traversal to its intended content directory.
 
 ## Run the hosted suite
 
@@ -161,7 +167,7 @@ and deployment for a later interoperability check. No hosted run has been perfor
 for this extraction.
 
 1. Use an isolated test repository and test identity page. Configure the
-   publisher's GitHub OAuth callback as `PUBLIC_APP_URL/auth/github/callback`.
+   publisher's GitHub App callback as `PUBLIC_APP_URL/login/callback`.
    Set `MICROPUB_BACKEND=github` only for that test repository. The file backend
    writes to the publisher checkout, not to the separately hosted blog.
 2. On the test identity page, advertise `rel=micropub`, `rel=authorization_endpoint`,

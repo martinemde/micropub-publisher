@@ -1,6 +1,11 @@
-# GitHub OAuth + Micropub Blog Editor Setup
+# GitHub App + Micropub Blog Editor Setup
 
-This document explains how to set up the standalone GitHub OAuth authentication, Micropub endpoints, and blog editor. `PUBLIC_APP_URL` is the publisher's origin; `PUBLIC_SITE_URL` is the published blog's origin.
+This document explains how to set up the standalone GitHub App user authentication, Micropub endpoints, and blog editor. `PUBLIC_APP_URL` is the publisher's origin; `PUBLIC_SITE_URL` is the published blog's origin.
+
+Production callback: `https://publish.martinemde.com/login/callback`. Follow the
+current deployment settings in [README.md](README.md). Use the GitHub App client ID
+and client secret, Contents read/write on selected repositories, and expiring user
+tokens. The service refreshes user tokens and never authenticates as an installation.
 
 ## Overview
 
@@ -58,7 +63,7 @@ The Micropub implementation uses a pluggable storage backend system that separat
 #### 2. File Backend (Local Development)
 
 - **When**: Development mode or when `MICROPUB_BACKEND=file`
-- **Requires**: No authentication needed
+- **Requires**: Endpoint authentication still applies; storage needs no GitHub API access
 - **Storage**: Writes directly to local filesystem
 - **Posts**: `src/content/blog/YYYY-MM-DD-slug.md`
 - **Images**: `static/images/blog/filename.ext`
@@ -126,7 +131,7 @@ GITHUB_REPO=your_repository_name  # Optional, defaults to OWNER.github.io
 Any Micropub-compatible client can publish to your blog:
 
 1. **Endpoint**: `https://publisher.example/micropub`
-2. **Authentication**: Include GitHub token in Authorization header or use session
+2. **Authentication**: Use an IndieAuth bearer token; the same-origin editor uses its session cookie
 3. **Supported properties**:
    - `name`: Post title
    - `content`: Post body (markdown)
@@ -165,9 +170,9 @@ Images uploaded through the editor or media endpoint are stored in:
    - **Protected**: `/micropub` and `/micropub/media` (require authentication)
    - Authentication checked server-side when attempting to publish or upload
 
-2. **OAuth Scope**: Requests `repo` scope for full repository access
-   - Required to create/update files
-   - Only grants access to users who own the repository
+2. **GitHub App Permissions**: Contents read/write on selected repositories
+   - User authorization requests no OAuth `repo` scope
+   - API writes use the user token, limited by both user and app access
 
 3. **Repository Ownership Verification**:
    - Checks that authenticated user owns the configured repository
