@@ -16,8 +16,6 @@
 body {
   min-height: 100vh;
   margin: 0;
-  background: var(--body-background-color);
-  color: var(--base-font-color);
 }
 
 html[data-mode='light'] {
