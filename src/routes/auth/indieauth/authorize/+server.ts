@@ -120,12 +120,14 @@ export const GET: RequestHandler = async (event) => {
 
   // Generate OAuth state for CSRF protection
   const oauthState = generateState();
+  const oauthVerifier = generateState();
 
   // Store IndieAuth request details in session
   const session = await getSession(event);
   await setSession(event, {
     ...session,
     oauthState,
+    oauthVerifier,
     indieAuthRequest: {
       scope,
       me,
@@ -139,8 +141,8 @@ export const GET: RequestHandler = async (event) => {
 
   // Build GitHub OAuth URL
   const publisherUrl = requireEnvironmentVariable('PUBLIC_APP_URL', env.PUBLIC_APP_URL);
-  const githubCallbackUri = `${publisherUrl}/auth/github/callback`;
-  const authUrl = getAuthorizationUrl(oauthState, githubCallbackUri);
+  const githubCallbackUri = `${publisherUrl}/login/callback`;
+  const authUrl = getAuthorizationUrl(oauthState, githubCallbackUri, oauthVerifier);
 
   // Redirect to GitHub for authentication
   redirect(302, authUrl);

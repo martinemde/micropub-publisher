@@ -1,4 +1,4 @@
-import { json, error } from '@sveltejs/kit';
+import { json, error, isHttpError } from '@sveltejs/kit';
 import { createStorageBackend } from '$lib/server/storage/factory';
 import type { RequestHandler } from './$types';
 
@@ -18,7 +18,8 @@ export const GET: RequestHandler = async ({ locals }) => {
 
     return json(posts);
   } catch (err) {
-    console.error('Failed to list blog posts:', err);
+    if (isHttpError(err)) throw err;
+    console.error('Failed to list blog posts:');
     error(500, 'Failed to list blog posts');
   }
 };

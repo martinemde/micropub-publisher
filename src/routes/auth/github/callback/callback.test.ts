@@ -275,9 +275,7 @@ describe('GitHub OAuth Callback Security', () => {
 
       // Should have logged the validation error
       expect(consoleErrorSpy).toHaveBeenCalled();
-      const errorMessage = String(consoleErrorSpy.mock.calls[0][1]);
-      // javascript: scheme will fail either URL parsing or https validation
-      expect(errorMessage).toMatch(/Invalid redirect_uri|redirect_uri must use https/);
+      expect(consoleErrorSpy).toHaveBeenCalledWith('GitHub user authentication failed');
 
       consoleErrorSpy.mockRestore();
     });
@@ -308,7 +306,7 @@ describe('GitHub OAuth Callback Security', () => {
       await expectHttpError(GET(event), 500, 'Authentication failed');
 
       expect(consoleErrorSpy).toHaveBeenCalled();
-      expect(String(consoleErrorSpy.mock.calls[0][1])).toContain('https');
+      expect(consoleErrorSpy).toHaveBeenCalledWith('GitHub user authentication failed');
 
       consoleErrorSpy.mockRestore();
     });
@@ -370,8 +368,7 @@ describe('GitHub OAuth Callback Security', () => {
 
       // Verify sensitive data was logged but not exposed to user
       expect(consoleErrorSpy).toHaveBeenCalled();
-      const errorLog = consoleErrorSpy.mock.calls[0][1];
-      expect(String(errorLog)).toContain('SECRET_KEY=abc123');
+      expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain('SECRET_KEY=abc123');
 
       consoleErrorSpy.mockRestore();
     });
@@ -458,9 +455,9 @@ describe('GitHub OAuth Callback Security', () => {
 
       await expectHttpError(GET(event), 500, 'Authentication failed');
 
-      // Should log the actual error
+      // Log a safe event without GitHub response or token details
       expect(consoleErrorSpy).toHaveBeenCalled();
-      expect(String(consoleErrorSpy.mock.calls[0][1])).toContain('GitHub API error');
+      expect(consoleErrorSpy).toHaveBeenCalledWith('GitHub user authentication failed');
 
       consoleErrorSpy.mockRestore();
     });
@@ -478,7 +475,7 @@ describe('GitHub OAuth Callback Security', () => {
       await expectHttpError(GET(event), 500, 'Authentication failed');
 
       expect(consoleErrorSpy).toHaveBeenCalled();
-      expect(String(consoleErrorSpy.mock.calls[0][1])).toContain('Invalid authorization code');
+      expect(consoleErrorSpy).toHaveBeenCalledWith('GitHub user authentication failed');
 
       consoleErrorSpy.mockRestore();
     });
@@ -494,7 +491,7 @@ describe('GitHub OAuth Callback Security', () => {
       await expectHttpError(GET(event), 500, 'Authentication failed');
 
       expect(consoleErrorSpy).toHaveBeenCalled();
-      expect(String(consoleErrorSpy.mock.calls[0][1])).toContain('Failed to obtain access token');
+      expect(consoleErrorSpy).toHaveBeenCalledWith('GitHub user authentication failed');
 
       consoleErrorSpy.mockRestore();
     });
@@ -515,9 +512,7 @@ describe('GitHub OAuth Callback Security', () => {
       await expectHttpError(GET(event), 500, 'Authentication failed');
 
       expect(consoleErrorSpy).toHaveBeenCalled();
-      expect(String(consoleErrorSpy.mock.calls[0][1])).toContain(
-        'Failed to obtain user information'
-      );
+      expect(consoleErrorSpy).toHaveBeenCalledWith('GitHub user authentication failed');
 
       consoleErrorSpy.mockRestore();
     });

@@ -334,7 +334,7 @@ describe('IndieAuth Authorization Endpoint Security', () => {
       expect(location).toContain('github.com/login/oauth/authorize');
       expect(location).toContain('state=mock_oauth_state');
       expect(location).toContain(
-        `redirect_uri=${encodeURIComponent('https://publisher.example.com/auth/github/callback')}`
+        `redirect_uri=${encodeURIComponent('https://publisher.example.com/login/callback')}`
       );
     });
   });

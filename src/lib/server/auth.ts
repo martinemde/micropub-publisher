@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto';
 import { sealData, unsealData } from 'iron-session';
 import { env } from '$env/dynamic/private';
+import { env as publicEnv } from '$env/dynamic/public';
+import { requestUserToken, storeGithubCredential, hasGithubCredential } from './github-user-token';
 import type { RequestEvent } from '@sveltejs/kit';
 import { requireEnvironmentVariable } from './env';
 
@@ -12,6 +15,7 @@ export interface SessionData {
   };
   githubToken?: string;
   oauthState?: string;
+  oauthVerifier?: string;
   indieAuthRequest?: {
     scope?: string;
     me: string;
@@ -56,7 +60,8 @@ function getSessionOptions() {
   };
 }
 
-const COOKIE_NAME = 'micropub_session';
+// Separate from legacy OAuth sessions carrying broad repo-scoped tokens.
+const COOKIE_NAME = 'micropub_session_v2';
 
 /**
  * Get session data from request cookies
@@ -70,6 +75,7 @@ export async function getSession(event: RequestEvent): Promise<SessionData> {
 
   try {
     const session = await unsealData<SessionData>(sessionCookie, getSessionOptions());
+    if (session.githubToken && !hasGithubCredential(session.githubToken)) return {};
     return session;
   } catch (error) {
     console.error('Failed to unseal session:', error);
@@ -102,31 +108,19 @@ export function clearSession(event: RequestEvent): void {
 /**
  * Exchange OAuth code for access token
  */
-export async function exchangeCodeForToken(code: string): Promise<string> {
-  const response = await fetch('https://github.com/login/oauth/access_token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json'
-    },
-    body: JSON.stringify({
-      client_id: env.GITHUB_CLIENT_ID,
-      client_secret: env.GITHUB_CLIENT_SECRET,
-      code
-    })
+export function githubCallbackUrl(): string {
+  return new URL(
+    '/login/callback',
+    requireEnvironmentVariable('PUBLIC_APP_URL', publicEnv.PUBLIC_APP_URL)
+  ).href;
+}
+export async function exchangeCodeForToken(code: string, verifier?: string): Promise<string> {
+  const credential = await requestUserToken({
+    code,
+    redirect_uri: githubCallbackUrl(),
+    ...(verifier ? { code_verifier: verifier } : {})
   });
-
-  if (!response.ok) {
-    throw new Error('Failed to exchange code for token');
-  }
-
-  const data = await response.json();
-
-  if (data.error) {
-    throw new Error(data.error_description || data.error);
-  }
-
-  return data.access_token;
+  return storeGithubCredential(credential);
 }
 
 /**
@@ -141,14 +135,17 @@ export function generateState(): string {
 /**
  * Build GitHub OAuth authorization URL
  */
-export function getAuthorizationUrl(state: string, redirectUri: string): string {
+export function getAuthorizationUrl(state: string, redirectUri: string, verifier?: string): string {
   const params = new URLSearchParams({
     client_id: requireEnvironmentVariable('GITHUB_CLIENT_ID', env.GITHUB_CLIENT_ID),
     redirect_uri: redirectUri,
-    scope: 'repo',
     state
   });
 
+  if (verifier) {
+    params.set('code_challenge', createHash('sha256').update(verifier).digest('base64url'));
+    params.set('code_challenge_method', 'S256');
+  }
   return `https://github.com/login/oauth/authorize?${params}`;
 }
 

@@ -195,7 +195,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     if (err && typeof err === 'object' && 'status' in err) {
       throw err;
     }
-    console.error('Micropub POST error:', err);
+    console.error('Micropub POST error:');
     error(500, 'Failed to create post');
   }
 };

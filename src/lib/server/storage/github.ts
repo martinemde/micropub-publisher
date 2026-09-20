@@ -1,3 +1,5 @@
+import { resolveGithubToken } from '../github-user-token';
+import { isHttpError } from '@sveltejs/kit';
 import { Octokit } from '@octokit/rest';
 import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
@@ -12,13 +14,17 @@ import { requireEnvironmentVariable } from '../env';
  */
 export class GitHubStorageBackend implements StorageBackend {
   async deleteFile(path: string, message: string): Promise<void> {
-    const { data } = await this.octokit.repos.getContent({
+    const { data } = await (
+      await this.client()
+    ).repos.getContent({
       owner: this.owner,
       repo: this.repo,
       path
     });
     if (!('sha' in data)) throw new Error('Expected a file');
-    await this.octokit.repos.deleteFile({
+    await (
+      await this.client()
+    ).repos.deleteFile({
       owner: this.owner,
       repo: this.repo,
       path,
@@ -26,12 +32,16 @@ export class GitHubStorageBackend implements StorageBackend {
       sha: data.sha
     });
   }
-  private octokit: Octokit;
+  private token: string;
+
+  private async client(): Promise<Octokit> {
+    return new Octokit({ auth: await resolveGithubToken(this.token) });
+  }
   private owner: string;
   private repo: string;
 
   constructor(token: string) {
-    this.octokit = new Octokit({ auth: token });
+    this.token = token;
 
     // Get repository configuration from environment variables
     const owner = env.GITHUB_OWNER;
@@ -52,7 +62,9 @@ export class GitHubStorageBackend implements StorageBackend {
       let sha: string | undefined;
 
       try {
-        const { data } = await this.octokit.repos.getContent({
+        const { data } = await (
+          await this.client()
+        ).repos.getContent({
           owner: this.owner,
           repo: this.repo,
           path
@@ -63,6 +75,7 @@ export class GitHubStorageBackend implements StorageBackend {
           sha = data.sha;
         }
       } catch (error: unknown) {
+        if (isHttpError(error)) throw error;
         // 404 means file doesn't exist, which is fine for creation
         if (!hasHttpStatus(error) || error.status !== 404) {
           throw error;
@@ -70,7 +83,9 @@ export class GitHubStorageBackend implements StorageBackend {
       }
 
       // Create or update the file
-      await this.octokit.repos.createOrUpdateFileContents({
+      await (
+        await this.client()
+      ).repos.createOrUpdateFileContents({
         owner: this.owner,
         repo: this.repo,
         path,
@@ -79,6 +94,7 @@ export class GitHubStorageBackend implements StorageBackend {
         sha // Include SHA if updating, omit if creating
       });
     } catch (error: unknown) {
+      if (isHttpError(error)) throw error;
       // Enhance error message with context
       const action = hasHttpStatus(error) && error.status === 404 ? 'create' : 'update';
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -90,13 +106,16 @@ export class GitHubStorageBackend implements StorageBackend {
 
   async fileExists(path: string): Promise<boolean> {
     try {
-      await this.octokit.repos.getContent({
+      await (
+        await this.client()
+      ).repos.getContent({
         owner: this.owner,
         repo: this.repo,
         path
       });
       return true;
     } catch (error: unknown) {
+      if (isHttpError(error)) throw error;
       if (hasHttpStatus(error) && error.status === 404) {
         return false;
       }
@@ -116,7 +135,9 @@ export class GitHubStorageBackend implements StorageBackend {
       let sha: string | undefined;
 
       try {
-        const { data } = await this.octokit.repos.getContent({
+        const { data } = await (
+          await this.client()
+        ).repos.getContent({
           owner: this.owner,
           repo: this.repo,
           path
@@ -126,6 +147,7 @@ export class GitHubStorageBackend implements StorageBackend {
           sha = data.sha;
         }
       } catch (error: unknown) {
+        if (isHttpError(error)) throw error;
         // 404 is expected for new files
         if (!hasHttpStatus(error) || error.status !== 404) {
           throw error;
@@ -133,7 +155,9 @@ export class GitHubStorageBackend implements StorageBackend {
       }
 
       // Upload the image
-      await this.octokit.repos.createOrUpdateFileContents({
+      await (
+        await this.client()
+      ).repos.createOrUpdateFileContents({
         owner: this.owner,
         repo: this.repo,
         path,
@@ -148,6 +172,7 @@ export class GitHubStorageBackend implements StorageBackend {
 
       return publicUrl;
     } catch (error: unknown) {
+      if (isHttpError(error)) throw error;
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Failed to upload image to GitHub: ${message}`, {
         cause: error
@@ -157,7 +182,9 @@ export class GitHubStorageBackend implements StorageBackend {
 
   async readFile(path: string): Promise<string> {
     try {
-      const { data } = await this.octokit.repos.getContent({
+      const { data } = await (
+        await this.client()
+      ).repos.getContent({
         owner: this.owner,
         repo: this.repo,
         path
@@ -170,6 +197,7 @@ export class GitHubStorageBackend implements StorageBackend {
 
       throw new Error('File content not available');
     } catch (error: unknown) {
+      if (isHttpError(error)) throw error;
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Failed to read file from GitHub: ${message}`, {
         cause: error
@@ -179,7 +207,9 @@ export class GitHubStorageBackend implements StorageBackend {
 
   async listBlogPosts(): Promise<BlogPostFileInfo[]> {
     try {
-      const { data } = await this.octokit.repos.getContent({
+      const { data } = await (
+        await this.client()
+      ).repos.getContent({
         owner: this.owner,
         repo: this.repo,
         path: 'src/content/blog'
@@ -214,6 +244,7 @@ export class GitHubStorageBackend implements StorageBackend {
 
       return posts;
     } catch (error: unknown) {
+      if (isHttpError(error)) throw error;
       // If directory doesn't exist, return empty array
       if (hasHttpStatus(error) && error.status === 404) {
         return [];

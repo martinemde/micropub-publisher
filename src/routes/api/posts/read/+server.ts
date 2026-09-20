@@ -1,4 +1,4 @@
-import { json, error } from '@sveltejs/kit';
+import { json, error, isHttpError } from '@sveltejs/kit';
 import { createStorageBackend } from '$lib/server/storage/factory';
 import type { RequestHandler } from './$types';
 
@@ -28,7 +28,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
     return json({ content });
   } catch (err) {
-    console.error('Failed to read blog post:', err);
+    if (isHttpError(err)) throw err;
+    console.error('Failed to read blog post:');
     error(500, 'Failed to read blog post');
   }
 };

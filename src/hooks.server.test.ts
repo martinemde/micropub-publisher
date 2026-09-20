@@ -1,11 +1,15 @@
 // @vitest-environment node
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isHttpError, isRedirect, json, type RequestEvent } from '@sveltejs/kit';
 // @ts-expect-error SvelteKit exports this test context helper without public types.
 import { with_request_store } from '@sveltejs/kit/internal/server';
 import { env } from '$env/dynamic/private';
+import { env as publicEnv } from '$env/dynamic/public';
+import { GET as login } from './routes/auth/github/login/+server';
+import { GET as logout } from './routes/auth/github/logout/+server';
 import { GET as authorize } from './routes/auth/indieauth/authorize/+server';
-import { GET as callback } from './routes/auth/github/callback/+server';
+import { GET as callback } from './routes/login/callback/+server';
 import { POST as exchange } from './routes/auth/indieauth/token/+server';
 import { handle } from './hooks.server';
 import { GET, POST } from './routes/micropub/+server';
@@ -15,9 +19,13 @@ import { clearAllTokens, storeAccessToken } from '$lib/server/token-store';
 import matter from 'gray-matter';
 
 // Fake GitHub at the external API boundary; keep the storage implementation real.
+const githubAuthentications = vi.hoisted(() => [] as string[]);
 const githubWrites = vi.hoisted(() => new Map<string, string>());
 vi.mock('@octokit/rest', () => ({
   Octokit: class {
+    constructor({ auth }: { auth: string }) {
+      githubAuthentications.push(auth);
+    }
     users = {
       getAuthenticated: async () => ({
         data: { id: 1, login: 'test_owner', name: 'Test', avatar_url: '' }
@@ -54,6 +62,7 @@ let token: string;
 beforeEach(() => {
   clearAllTokens();
   githubWrites.clear();
+  githubAuthentications.length = 0;
   env.MICROPUB_BACKEND = 'test';
   vi.stubGlobal(
     'fetch',
@@ -64,7 +73,12 @@ beforeEach(() => {
   token = storeAccessToken('fake-github-token', 'https://example.com/', 'create');
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+  publicEnv.PUBLIC_APP_URL = publisher;
+});
 
 // Exercise the hook chain and real handlers. Only environment and storage are
 // configured for testing; no parser, authentication, or handler is mocked.
@@ -75,11 +89,12 @@ async function request(
 ) {
   const cookies = session instanceof Map ? session : new Map<string, string>();
   const event = {
-    request: new Request(`${publisher}${path}`, init),
-    url: new URL(`${publisher}${path}`),
+    request: new Request(new URL(path, publisher), init),
+    url: new URL(path, publisher),
     locals: {},
     cookies: {
       get: (name: string) => cookies.get(name),
+      delete: (name: string) => cookies.delete(name),
       set: (name: string, value: string) => cookies.set(name, value)
     }
   } as unknown as RequestEvent;
@@ -87,9 +102,13 @@ async function request(
 
   const resolve = vi.fn(async (event: RequestEvent) => {
     try {
+      if (event.url.pathname === '/auth/github/login')
+        return await login(event as Parameters<typeof login>[0]);
+      if (event.url.pathname === '/auth/github/logout')
+        return await logout(event as Parameters<typeof logout>[0]);
       if (event.url.pathname === '/auth/indieauth/authorize')
         return await authorize(event as Parameters<typeof authorize>[0]);
-      if (event.url.pathname === '/auth/github/callback')
+      if (event.url.pathname === '/login/callback')
         return await callback(event as Parameters<typeof callback>[0]);
       if (event.url.pathname === '/auth/indieauth/token')
         return await exchange(event as Parameters<typeof exchange>[0]);
@@ -433,7 +452,7 @@ describe('Requested scope survives authorization and token exchange', () => {
       vi.fn(async (url: string) => {
         if (url !== 'https://github.com/login/oauth/access_token')
           throw new Error('Unexpected external request');
-        return Response.json({ access_token: 'fake-github-token' });
+        return Response.json({ access_token: 'ghu_fake-user-token' });
       })
     );
     const params = new URLSearchParams({
@@ -446,12 +465,14 @@ describe('Requested scope survives authorization and token exchange', () => {
     const authorization = await request(`/auth/indieauth/authorize?${params}`, {});
     expect(authorization.response.status).toBe(302);
     const githubUrl = new URL(authorization.response.headers.get('Location')!);
+    expect(githubUrl.searchParams.get('redirect_uri')).toBe(`${publisher}/login/callback`);
+    expect(githubUrl.searchParams.has('scope')).toBe(false);
     const callbackParams = new URLSearchParams({
       code: 'fake-oauth-code',
       state: githubUrl.searchParams.get('state')!
     });
     const authorized = await request(
-      `/auth/github/callback?${callbackParams}`,
+      `/login/callback?${callbackParams}`,
       {},
       authorization.cookies
     );
@@ -710,4 +731,139 @@ it('keeps concurrent creates from overwriting the same slug', async () => {
       )
       .sort()
   ).toEqual(['first', 'second', 'third']);
+});
+
+describe('GitHub App user authorization for production', () => {
+  const production = 'https://publish.martinemde.com';
+  async function authorizeClient() {
+    publicEnv.PUBLIC_APP_URL = production;
+    env.MICROPUB_BACKEND = 'github';
+    const params = new URLSearchParams({
+      me: 'https://example.com/',
+      client_id: client,
+      redirect_uri: `${client}/callback`,
+      state: 'client-state',
+      scope: 'create'
+    });
+    const started = await request(`${production}/auth/indieauth/authorize?${params}`, {});
+    const target = new URL(started.response.headers.get('Location')!);
+    expect(target.origin).toBe('https://github.com');
+    expect(target.searchParams.get('redirect_uri')).toBe(`${production}/login/callback`);
+    expect(target.searchParams.has('scope')).toBe(false);
+    const completed = await request(
+      `${production}/login/callback?${new URLSearchParams({ code: 'user-code', state: target.searchParams.get('state')! })}`,
+      {},
+      started.cookies
+    );
+    expect(completed.response.status).toBe(302);
+    const clientCallback = new URL(completed.response.headers.get('Location')!);
+    const exchanged = await request('/auth/indieauth/token', {
+      method: 'POST',
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: clientCallback.searchParams.get('code')!,
+        client_id: client,
+        redirect_uri: `${client}/callback`
+      })
+    });
+    expect(exchanged.response.status).toBe(200);
+    const result = await exchanged.response.json();
+    expect(JSON.stringify(result)).not.toContain('ghu_');
+    expect(JSON.stringify(result)).not.toContain('ghr_');
+    return {
+      bearer: result.access_token,
+      cookies: completed.cookies,
+      challenge: target.searchParams.get('code_challenge')
+    };
+  }
+  it('refreshes user credentials once for concurrent publishes and revokes them on logout', async () => {
+    const now = Date.now();
+    const requests: Record<string, string>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        expect(url).toBe('https://github.com/login/oauth/access_token');
+        const body = JSON.parse(init.body as string);
+        requests.push(body);
+        expect(body.client_id).toBe('test_client_id');
+        expect(body.client_secret).toBe('test_client_secret');
+        if (body.grant_type === 'refresh_token') {
+          expect(body.refresh_token).toBe('ghr_original');
+          return Response.json({
+            access_token: 'ghu_refreshed',
+            expires_in: 28800,
+            refresh_token: 'ghr_rotated',
+            refresh_token_expires_in: 15897600
+          });
+        }
+        expect(body.redirect_uri).toBe(`${production}/login/callback`);
+        expect(body.code).toBe('user-code');
+        return Response.json({
+          access_token: 'ghu_original',
+          expires_in: 28800,
+          refresh_token: 'ghr_original',
+          refresh_token_expires_in: 15897600
+        });
+      })
+    );
+    const { bearer, cookies, challenge } = await authorizeClient();
+    expect(requests[0].code_verifier).toMatch(/^[a-f0-9]{64}$/);
+    expect(createHash('sha256').update(requests[0].code_verifier).digest('base64url')).toBe(
+      challenge
+    );
+    expect(githubAuthentications).toContain('ghu_original');
+    vi.spyOn(Date, 'now').mockReturnValue(now + 8 * 60 * 60 * 1000);
+    githubAuthentications.length = 0;
+    const publish = () =>
+      request('/micropub', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${bearer}` },
+        body: new URLSearchParams({ h: 'entry', content: 'Refreshed user post' })
+      });
+    const results = await Promise.all([publish(), publish()]);
+    expect(results.map(({ response }) => response.status)).toEqual([201, 201]);
+    expect(requests.filter((body) => body.grant_type === 'refresh_token')).toHaveLength(1);
+    expect(githubAuthentications.length).toBeGreaterThan(0);
+    expect(githubAuthentications.every((auth) => auth === 'ghu_refreshed')).toBe(true);
+    expect((await request('/auth/github/logout', {}, cookies)).response.status).toBe(302);
+    expect((await publish()).response.status).toBe(401);
+    vi.restoreAllMocks();
+  });
+  it('fails closed when GitHub rejects refresh and keeps secrets out of responses and logs', async () => {
+    const now = Date.now();
+    const logs = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string);
+        return body.grant_type === 'refresh_token'
+          ? Response.json({ error: 'bad_refresh_token', error_description: 'ghr_secret' })
+          : Response.json({
+              access_token: 'ghu_secret',
+              expires_in: 28800,
+              refresh_token: 'ghr_secret',
+              refresh_token_expires_in: 15897600
+            });
+      })
+    );
+    const { bearer } = await authorizeClient();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 8 * 60 * 60 * 1000);
+    const { response } = await request('/micropub', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${bearer}` },
+      body: new URLSearchParams({ content: 'Must not publish' })
+    });
+    expect(response.status).toBe(401);
+    expect(githubWrites.size).toBe(0);
+    expect(await response.text()).not.toContain('secret');
+    expect(JSON.stringify(logs.mock.calls)).not.toContain('secret');
+    vi.restoreAllMocks();
+  });
+  it('uses the same registered callback for editor login', async () => {
+    publicEnv.PUBLIC_APP_URL = production;
+    const { response } = await request(`${production}/auth/github/login`, {});
+    const url = new URL(response.headers.get('Location')!);
+    expect(url.searchParams.get('redirect_uri')).toBe(`${production}/login/callback`);
+    expect(url.searchParams.has('scope')).toBe(false);
+  });
 });

@@ -1,3 +1,4 @@
+import { resolveGithubToken } from './github-user-token';
 import { Octokit } from '@octokit/rest';
 import { env } from '$env/dynamic/private';
 import { hasHttpStatus } from './storage/types';
@@ -9,7 +10,7 @@ import { hasHttpStatus } from './storage/types';
  * @returns User information
  */
 export async function getGitHubUser(token: string) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: await resolveGithubToken(token) });
 
   const { data: user } = await octokit.users.getAuthenticated();
 
@@ -29,7 +30,7 @@ export async function getGitHubUser(token: string) {
  * @returns true if user owns or has write access to the repository
  */
 export async function verifyRepoOwnership(token: string, username: string): Promise<boolean> {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new Octokit({ auth: await resolveGithubToken(token) });
 
   const owner = env.GITHUB_OWNER;
   const repo = env.GITHUB_REPO || `${owner}.github.io`;

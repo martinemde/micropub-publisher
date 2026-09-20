@@ -1,6 +1,7 @@
-import { error, redirect } from '@sveltejs/kit';
+import { error, redirect, isRedirect } from '@sveltejs/kit';
 import { exchangeCodeForToken, getSession, setSession, createAuthCode } from '$lib/server/auth';
 import { getGitHubUser, verifyRepoOwnership } from '$lib/server/github-auth';
+import { revokeGithubCredential } from '$lib/server/github-user-token';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -17,9 +18,11 @@ export const GET: RequestHandler = async (event) => {
     error(400, 'Invalid state parameter');
   }
 
+  let credentialReference: string | undefined;
   try {
     // Exchange code for access token
-    const token = await exchangeCodeForToken(code);
+    const token = await exchangeCodeForToken(code, session.oauthVerifier);
+    credentialReference = token;
     if (!token) {
       throw new Error('Failed to obtain access token from GitHub');
     }
@@ -96,6 +99,7 @@ export const GET: RequestHandler = async (event) => {
       // Explicitly not including: oauthState
     });
   } catch (err) {
+    if (!isRedirect(err) && credentialReference) revokeGithubCredential(credentialReference);
     // SvelteKit's redirect() throws a redirect object with status and location
     // SvelteKit's error() throws an HttpError with status and body
     // We need to rethrow both, only catching unexpected errors
@@ -110,9 +114,8 @@ export const GET: RequestHandler = async (event) => {
       }
     }
 
-    console.error('OAuth callback error:', err instanceof Error ? err.message : String(err));
-    console.error('Error stack:', err instanceof Error ? err.stack : 'No stack trace');
-    console.error('Error details:', JSON.stringify(err, Object.getOwnPropertyNames(err)));
+    // GitHub errors can carry authorization headers or token responses.
+    console.error('GitHub user authentication failed');
     error(500, 'Authentication failed');
   }
 

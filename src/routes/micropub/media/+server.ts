@@ -46,7 +46,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     });
   } catch (err) {
     if (isHttpError(err)) throw err;
-    console.error('Media upload error:', err);
+    console.error('Media upload error:');
     error(500, 'Failed to upload image');
   }
 };
