@@ -89,3 +89,8 @@ GitHub tokens remotely. The old `/auth/github/callback` route remains an alias.
 
 This is local deployment preparation. DNS, HTTPS, app installation, secrets, and the
 live authorization flow must still be configured and verified on the host.
+
+When installation starts on GitHub with user authorization enabled, the first
+callback can lack our state/PKCE. The publisher discards that code and starts a
+fresh protected login. To retry a failed installation landing, open
+`http://localhost:5180/auth/github/login`; reinstalling is not necessary.

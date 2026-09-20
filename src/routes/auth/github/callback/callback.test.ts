@@ -93,11 +93,12 @@ describe('GitHub OAuth Callback Security', () => {
       await expectHttpError(GET(event), 400, 'Missing code or state parameter');
     });
 
-    it('should reject requests missing state parameter', async () => {
+    it('should restart login without exchanging a code that has no state', async () => {
       const event = createRequestEvent('valid_code', '', { oauthState: 'valid_state' });
       event.url.searchParams.delete('state');
 
-      await expectHttpError(GET(event), 400, 'Missing code or state parameter');
+      expect(await expectRedirect(GET(event))).toBe('/auth/github/login');
+      expect(auth.exchangeCodeForToken).not.toHaveBeenCalled();
     });
   });
 

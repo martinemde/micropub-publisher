@@ -867,3 +867,39 @@ describe('GitHub App user authorization for production', () => {
     expect(url.searchParams.has('scope')).toBe(false);
   });
 });
+
+it.each(['?code=installation-code', '?installation_id=123&setup_action=install', ''])(
+  'starts a fresh login for an installation callback without state: %s',
+  async (query) => {
+    env.MICROPUB_BACKEND = 'github';
+    const exchangeRequests: Record<string, string>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        expect(url).toBe('https://github.com/login/oauth/access_token');
+        exchangeRequests.push(JSON.parse(init.body as string));
+        return Response.json({ access_token: 'ghu_user-after-install' });
+      })
+    );
+    const arrival = await request(`/login/callback${query}`, {});
+    expect(arrival.response.status).toBe(302);
+    expect(arrival.response.headers.get('Location')).toBe('/auth/github/login');
+    expect(exchangeRequests).toEqual([]);
+    const started = await request('/auth/github/login', {}, arrival.cookies);
+    const githubUrl = new URL(started.response.headers.get('Location')!);
+    expect(githubUrl.searchParams.get('state')).toMatch(/^[a-f0-9]{64}$/);
+    expect(githubUrl.searchParams.get('code_challenge_method')).toBe('S256');
+    const completed = await request(
+      `/login/callback?${new URLSearchParams({ code: 'fresh-user-code', state: githubUrl.searchParams.get('state')! })}`,
+      {},
+      started.cookies
+    );
+    expect(completed.response.status).toBe(302);
+    expect(completed.response.headers.get('Location')).toBe('/editor');
+    expect(exchangeRequests).toHaveLength(1);
+    expect(exchangeRequests[0].code).toBe('fresh-user-code');
+    expect(createHash('sha256').update(exchangeRequests[0].code_verifier).digest('base64url')).toBe(
+      githubUrl.searchParams.get('code_challenge')
+    );
+  }
+);

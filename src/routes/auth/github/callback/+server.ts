@@ -8,7 +8,15 @@ export const GET: RequestHandler = async (event) => {
   const code = event.url.searchParams.get('code');
   const state = event.url.searchParams.get('state');
 
-  if (!code || !state) {
+  if (event.url.searchParams.has('error')) {
+    error(400, 'GitHub authorization was not completed');
+  }
+
+  // Installation can start on GitHub, before we have a browser-bound state or
+  // PKCE verifier. Discard that code and initiate our own protected login flow.
+  if (!state) redirect(302, '/auth/github/login');
+
+  if (!code) {
     error(400, 'Missing code or state parameter');
   }
 
