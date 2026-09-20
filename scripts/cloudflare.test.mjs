@@ -67,6 +67,17 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
           return Response.json({ owner: { login: 'tester' } });
         if (decodeURIComponent(url.pathname) === '/repos/tester/blog/contents/src/content/blog')
           return Response.json([]);
+        if (
+          decodeURIComponent(url.pathname) ===
+          '/repos/tester/blog/contents/src/content/blog/existing.md'
+        )
+          return Response.json({
+            type: 'file',
+            encoding: 'base64',
+            content: Buffer.from(
+              '---\ntitle: Existing post\nslug: existing\ncategory: [ruby, web]\npublished: true\n---\nExisting markdown body\n'
+            ).toString('base64')
+          });
       }
       unexpected.push(`${request.method} ${url.origin}${url.pathname}`);
       return new Response(null, { status: 502 });
@@ -128,6 +139,22 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
     worker = new Miniflare(convertV4MiniflareOptions(options));
     const posts = await worker.dispatchFetch(`${origin}/api/posts`, { headers: { cookie } });
     expect(posts.status).toBe(200);
+    const post = await worker.dispatchFetch(
+      `${origin}/api/posts/read?path=src/content/blog/existing.md`,
+      {
+        headers: { cookie }
+      }
+    );
+    expect(post.status).toBe(200);
+    expect(await post.json()).toEqual({
+      frontmatter: {
+        title: 'Existing post',
+        slug: 'existing',
+        category: ['ruby', 'web'],
+        published: true
+      },
+      content: 'Existing markdown body\n'
+    });
     expect(exchanges).toBe(2);
     const config = () =>
       worker.dispatchFetch(`${origin}/micropub?q=config`, {

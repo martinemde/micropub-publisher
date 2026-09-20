@@ -1,5 +1,6 @@
 import { json, error, isHttpError } from '@sveltejs/kit';
 import { createStorageBackend } from '$lib/server/storage/factory';
+import matter from 'gray-matter';
 import type { RequestHandler } from './$types';
 
 /**
@@ -24,9 +25,10 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 
   try {
     const backend = createStorageBackend(locals.githubToken);
-    const content = await backend.readFile(path);
+    const source = await backend.readFile(path);
+    const { data: frontmatter, content } = matter(source);
 
-    return json({ content });
+    return json({ frontmatter, content });
   } catch (err) {
     if (isHttpError(err)) throw err;
     console.error('Failed to read blog post:');

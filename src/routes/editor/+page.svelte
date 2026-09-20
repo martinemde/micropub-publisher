@@ -1,7 +1,6 @@
 <script lang="ts">
   import remarkHtml from 'remark-html';
   import remarkParse from 'remark-parse';
-  import matter from 'gray-matter';
   import type { PageData } from './$types';
   import { Upload, Save } from 'lucide-svelte';
   import { resolve } from '$app/paths';
@@ -184,10 +183,7 @@
         throw new Error('Failed to load post');
       }
 
-      const { content: rawContent } = await response.json();
-
-      // Parse frontmatter
-      const { data: frontmatter, content: postContent } = matter(rawContent);
+      const { frontmatter, content: postContent } = await response.json();
 
       // Populate form
       title = frontmatter.title || '';
