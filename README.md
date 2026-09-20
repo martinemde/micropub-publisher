@@ -2,7 +2,7 @@
 
 A standalone Micropub, media, IndieAuth, and Markdown editor service backed by a user's GitHub OAuth authorization. The service has no repository credential of its own: each GitHub write uses the token granted by the person authorizing the Micropub client.
 
-This was extracted from `martinemde.com` at commit `964f9969d271`. `PUBLIC_APP_URL` and `PUBLIC_SITE_URL` allow the publisher and published site to use different origins. The extracted routes have local tests, but hosted Micropub conformance has not been verified; see `TESTING_GUIDE.md` for the current gaps and test procedure.
+This was extracted from `martinemde.com` at commit `964f9969d271`. `PUBLIC_APP_URL` and `PUBLIC_SITE_URL` allow the publisher and published site to use different origins. All 35 in-scope local Micropub conformance cases pass. Hosted conformance has not been verified; see `TESTING_GUIDE.md` for the procedure and limits of local judgments.
 
 ## Routes
 
@@ -45,8 +45,9 @@ Tests fake GitHub and other external services at the application boundary. They 
 For the independent upstream conformance tests, run `bun run conformance:setup`
 once, then `bun run conformance`. This starts an isolated local app, runs the
 pinned micropub.rocks browser assertions over HTTP, and saves artifacts under
-`.conformance/runs/`. Failures and manual checks produce a nonzero exit code.
-See `TESTING_GUIDE.md` for the current baseline and limitations.
+`.conformance/runs/`. Failures and unresolved manual checks produce a nonzero exit code. File-backed
+judgments record evidence for the manual cases. The GitHub Actions workflow runs
+the same commands; see `TESTING_GUIDE.md` for details.
 
 ## Deploy
 
@@ -57,6 +58,7 @@ bun run build
 bun run start
 ```
 
-Set `MICROPUB_BACKEND=github` in production. Micropub access tokens and authorization-code replay state intentionally remain in memory, matching the extracted implementation. A restart invalidates issued Micropub tokens, and multiple replicas would not share them; use one process until those stores are replaced with a durable implementation.
+Set `MICROPUB_BACKEND=github` and `BODY_SIZE_LIMIT=12M` in production. The body limit
+allows a 10 MiB image plus multipart overhead; see the [adapter configuration](https://svelte.dev/docs/kit/adapter-node#Environment-variables-BODY_SIZE_LIMIT). Micropub access tokens and authorization-code replay state intentionally remain in memory, matching the extracted implementation. A restart invalidates issued Micropub tokens, and multiple replicas would not share them; use one process until those stores are replaced with a durable implementation.
 
 See `MICROPUB_SETUP.md`, `INDIEAUTH_IMPLEMENTATION.md`, and `TESTING_GUIDE.md` for the recovered implementation details. `OAUTH_SECURITY_ANALYSIS.md` records the original audit and the fixes made before extraction.

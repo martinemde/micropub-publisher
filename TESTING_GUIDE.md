@@ -58,9 +58,11 @@ header token. The local runner omits that header on its create request; the sour
 query and all upstream assertions remain unchanged. Case 805 still verifies that
 actual duplicate transports are rejected. No upstream source files are edited.
 
-A GitHub Actions job can run `bun install --frozen-lockfile`,
-`bun run conformance:setup`, and `bun run conformance`. Preserve the exit status and
-upload the current run's reports on failure. Pending judgments never count as passes.
+The local workflow `.github/workflows/conformance.yml` runs these commands on pushes
+and pull requests with Bun 1.4.2, no publishing credentials, and read-only repository
+permissions. It uploads reports and generated post snapshots even on failure, without
+uploading the isolated app or dependency tree. It has not been run on GitHub yet.
+Pending judgments never count as passes.
 
 ## Local verification
 
@@ -110,15 +112,33 @@ broaden them. Configuration/source queries require authentication. Duplicate tok
 transports return 400. Scope failures use HTTP 401 `insufficient_scope`, following
 [Micropub error responses](https://www.w3.org/TR/micropub/#error-response).
 
-## Next milestone after conformance
+## Publishing workflow
 
-Complete the existing Micropub media endpoint and support the stable publishing
-extensions `post-status`, `mp-slug`, and post-types discovery. Support h-entry
-properties `name`, `content`, `category`, `photo`, and `bookmark-of`.
-Do not add syndication, location, media queries, post-list queries, or other
-experimental extensions. Preserve the existing empty `syndicate-to` config field.
-Conformance work should respect these exclusions rather than implementing every
-optional feature tested by micropub.rocks.
+The stable [Micropub extensions](https://indieweb.org/Micropub-extensions) supported
+here are `post-status`, `mp-slug`, and `post-types` in `q=config`. Config advertises
+note, article, photo, and bookmark. All use h-entry; supported publishing properties
+are `name`, `content`, `category`, `photo`, and `bookmark-of`.
+
+`post-status` accepts `published` (default) and `draft`. This maps to the blog's
+`published` frontmatter flag; draft visibility and future scheduling depend on the
+blog renderer respecting that metadata. Update the property to publish a draft.
+`mp-slug` suggests a slug at creation, normalized to lowercase letters/digits and
+hyphens. Collisions receive a unique suffix; the returned Location and stored
+`mp-slug` contain the allocated slug. Updates retain existing permalinks. The legacy
+`slug` property remains accepted for the built-in editor.
+
+Media accepts one JPEG, PNG, GIF, WebP, or AVIF file per endpoint request, up to 10 MiB.
+Names use server-generated UUIDs and extensions derived from the declared media type,
+so client filenames cannot select paths or overwrite prior uploads. Validation does
+not decode or re-encode image bytes. Empty files and SVG are rejected. Inline multipart
+photo creation uses the same validation. Configure the production adapter's
+`BODY_SIZE_LIMIT=12M` (also in `.env.example`) to allow multipart overhead.
+
+No syndication, location rendering, media queries, post-list queries, or other
+experimental extension is implemented. The existing empty `syndicate-to` config
+field is retained. Mutations are serialized within the supported single-process
+runtime; multiple replicas are not supported by the in-memory token store or write
+serialization.
 
 ## Credential boundary review
 
@@ -130,8 +150,8 @@ in server memory. Restarting the single process invalidates those mappings.
 A separate origin isolates this service from blog runtime code, but the GitHub
 OAuth request still asks for broad `repo` scope. It is not a repository-scoped
 credential. Raw error logging in publishing and OAuth paths needs review before
-relying on logs to be credential-free. Client-supplied slugs, filenames, and read
-paths also need canonical path validation; the file backend's `join` does not
+relying on logs to be credential-free. Post slugs and media names are now constrained; the editor API read
+paths still need canonical path validation; the file backend's `join` does not
 confine traversal to its intended content directory.
 
 ## Run the hosted suite
