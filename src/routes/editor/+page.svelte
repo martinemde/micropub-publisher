@@ -34,6 +34,13 @@
   let autoSlug = $state(true);
   let currentPath = $state(''); // Empty string means new post, otherwise path to existing post
 
+  function postState() {
+    return { title, content, slug, description, categories, published, currentPath };
+  }
+
+  // Local draft backups are separate from the last loaded or submitted post.
+  let savedPost = $state(JSON.stringify(postState()));
+
   // UI state
   let submitting = $state(false);
   let error = $state('');
@@ -116,6 +123,8 @@
   function clearDraft() {
     if (!browser) return;
 
+    if (saveTimeout) clearTimeout(saveTimeout);
+
     try {
       localStorage.removeItem(STORAGE_KEY);
       lastSaved = null;
@@ -145,27 +154,7 @@
 
   // Check if current form has unsaved changes
   function hasUnsavedChanges(): boolean {
-    if (!browser) return false;
-
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (!saved) return !!(title || content || description || categories);
-
-      const draft: EditorDraft = JSON.parse(saved);
-
-      // Compare current state with saved draft
-      return (
-        title !== draft.title ||
-        content !== draft.content ||
-        slug !== draft.slug ||
-        description !== draft.description ||
-        categories !== draft.categories ||
-        published !== draft.published ||
-        currentPath !== draft.currentPath
-      );
-    } catch {
-      return false;
-    }
+    return JSON.stringify(postState()) !== savedPost;
   }
 
   // Load a blog post from the API
@@ -198,6 +187,7 @@
           : (originalContent?.html ?? originalContent?.text ?? postContent);
       currentPath = path;
       autoSlug = false; // Don't auto-generate slug for existing posts
+      savedPost = JSON.stringify(postState());
 
       // Clear draft from localStorage since we're loading an existing post
       clearDraft();
@@ -232,8 +222,8 @@
     // Watch all form fields
     const _ = [title, content, slug, description, categories, published, autoSlug];
 
-    // Only auto-save if there's actual content
-    if (!title && !content && !description && !categories) return;
+    // Only back up changes that haven't been submitted.
+    if (!hasUnsavedChanges()) return;
 
     // Clear existing timeout
     if (saveTimeout) {
@@ -258,6 +248,7 @@
     error = '';
     success = '';
     submitting = true;
+    const submittedPost = postState();
 
     try {
       // Determine the date to use
@@ -305,15 +296,23 @@
         success = currentPath
           ? `Post updated successfully! View at: ${location}`
           : `Post created successfully! View at: ${location}`;
-        // Clear draft from localStorage
-        clearDraft();
         // Update currentPath if this was a new post
         if (!currentPath) {
           // Extract path from location or construct it
           const datePrefix = postDate;
-          slug = new URL(location).pathname.split('/').pop()!;
+          const createdSlug = new URL(location).pathname.split('/').pop()!;
+          if (slug === submittedPost.slug) slug = createdSlug;
           autoSlug = false;
-          currentPath = `src/content/blog/${datePrefix}-${slug}.md`;
+          currentPath = `src/content/blog/${datePrefix}-${createdSlug}.md`;
+          submittedPost.slug = createdSlug;
+          submittedPost.currentPath = currentPath;
+        }
+        savedPost = JSON.stringify(submittedPost);
+        if (hasUnsavedChanges()) {
+          // Preserve edits made while the request was in flight.
+          saveDraft();
+        } else {
+          clearDraft();
         }
       } else {
         const errorText = await response.text();

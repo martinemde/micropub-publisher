@@ -76,3 +76,86 @@ test.each([
     expect(document.querySelector('main')?.textContent).not.toContain('Failed to load post');
   }
 );
+
+test.each(['loaded', 'updated', 'autosaved', 'failed', 'editing during update'])(
+  'warns only about unsubmitted changes when switching posts: %s',
+  async (scenario) => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key)
+    });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    let finishUpdate!: (response: Response) => void;
+    const update = new Promise<Response>((resolve) => (finishUpdate = resolve));
+    vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
+      if (input === '/micropub') {
+        expect(JSON.parse(init!.body as string)).toMatchObject({
+          action: 'update',
+          replace: { content: ['Edited body'] }
+        });
+        return update;
+      }
+      if (input === '/api/posts') {
+        return Response.json(
+          ['first', 'second'].map((slug) => ({
+            filename: `${slug}.md`,
+            path: `src/content/blog/${slug}.md`,
+            slug,
+            date: '2026-03-20'
+          }))
+        );
+      }
+      const slug = input.includes('first.md') ? 'first' : 'second';
+      return Response.json({
+        content: 'Original body',
+        frontmatter: { title: slug, slug }
+      });
+    });
+    editor = mount(Editor, {
+      target: document.body,
+      props: {
+        data: { isAuthenticated: true, siteUrl: 'https://blog.example', user: null }
+      }
+    });
+    flushSync();
+    const postButton = (slug: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>('aside button')].find((button) =>
+        button.textContent?.includes(slug)
+      )!;
+    await vi.waitFor(() => expect(postButton('first')).toBeDefined());
+    postButton('first').click();
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('first')
+    );
+    const edit = (value: string) => {
+      const content = document.querySelector<HTMLTextAreaElement>('#content')!;
+      content.value = value;
+      content.dispatchEvent(new Event('input', { bubbles: true }));
+      flushSync();
+    };
+    if (scenario !== 'loaded') edit('Edited body');
+    if (scenario === 'autosaved') {
+      await vi.waitFor(() => expect(storage.size).toBe(1), { timeout: 2000 });
+    } else if (scenario !== 'loaded') {
+      document.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+      if (scenario === 'editing during update') edit('Still editing');
+      finishUpdate(new Response(null, { status: scenario === 'failed' ? 500 : 204 }));
+      await vi.waitFor(() =>
+        expect(document.querySelector('main')?.textContent).toContain(
+          scenario === 'failed' ? 'Failed to update' : 'Post updated successfully'
+        )
+      );
+    }
+    postButton('second').click();
+    const shouldWarn = !['loaded', 'updated'].includes(scenario);
+    expect(confirm).toHaveBeenCalledTimes(shouldWarn ? 1 : 0);
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe(
+        shouldWarn ? 'first' : 'second'
+      )
+    );
+  }
+);
