@@ -4,11 +4,14 @@ import {
   parseMicropubRequest,
   generateMarkdownFile,
   generateFilePath,
-  generateCommitMessage
+  generateCommitMessage,
+  readProperties,
+  invalid
 } from '$lib/server/micropub';
 import { createStorageBackend } from '$lib/server/storage/factory';
 import { requireMicropubToken } from '$lib/server/micropub-auth';
 import { requireEnvironmentVariable } from '$lib/server/env';
+import { findPost, mutatePost, postSlug } from '$lib/server/micropub-posts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -25,6 +28,20 @@ export const GET: RequestHandler = async ({ url, request, locals }) => {
     return json({
       'media-endpoint': `${requireEnvironmentVariable('PUBLIC_APP_URL', env.PUBLIC_APP_URL)}/micropub/media`,
       'syndicate-to': []
+    });
+  }
+
+  if (query === 'source') {
+    const target = url.searchParams.get('url');
+    const backend = createStorageBackend(authentication);
+    const file = await findPost(backend, target);
+    const properties = readProperties(await backend.readFile(file.path));
+    const requested = url.searchParams.getAll('properties[]');
+    return json({
+      type: ['h-entry'],
+      properties: requested.length
+        ? Object.fromEntries(Object.entries(properties).filter(([key]) => requested.includes(key)))
+        : properties
     });
   }
 
@@ -56,9 +73,21 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
         error(400, { message: 'Expected a JSON object', error: 'invalid_request' });
       }
       bodyToken = micropubRequest.access_token;
-    } else if (contentType.includes('application/x-www-form-urlencoded')) {
+    } else if (
+      contentType.includes('application/x-www-form-urlencoded') ||
+      contentType.includes('multipart/form-data')
+    ) {
       const formData = await request.formData();
-      micropubRequest = Object.fromEntries(formData);
+      micropubRequest = Object.create(null);
+      for (const [field, value] of formData) {
+        const key = field.endsWith('[]') ? field.slice(0, -2) : field;
+        if (key === 'action' && field !== key) invalid('Invalid action');
+        const previous = micropubRequest[key];
+        micropubRequest[key] =
+          previous === undefined
+            ? value
+            : [...(Array.isArray(previous) ? previous : [previous]), value];
+      }
       bodyToken = formData.get('access_token') ?? undefined;
     } else {
       error(
@@ -70,18 +99,49 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     const githubToken = requireMicropubToken(request, locals, url, bodyToken);
     if (githubToken instanceof Response) return githubToken;
 
-    // Creation has no action parameter. Never interpret an unsupported or
-    // malformed action as a request to create content.
     if (Object.hasOwn(micropubRequest, 'action') || Object.hasOwn(micropubRequest, 'action[]')) {
-      error(400, { message: 'Actions are not supported', error: 'invalid_request' });
+      const action = micropubRequest.action;
+      if (typeof action !== 'string' || !['update', 'delete', 'undelete'].includes(action))
+        invalid('Invalid action');
+      postSlug(micropubRequest.url);
+      if (action === 'update' && !contentType.includes('application/json'))
+        invalid('Updates require JSON');
+      requireMicropubToken(request, locals, url, bodyToken, action);
+      await mutatePost(createStorageBackend(githubToken), micropubRequest);
+      return new Response(null, { status: 204 });
     }
     requireMicropubToken(request, locals, url, bodyToken, 'create');
 
     // Create storage backend
     const backend = createStorageBackend(githubToken);
 
+    // File uploads are allowed only for the photo property. Store their public
+    // URLs, never File objects or authentication fields, in the post source.
+    for (const [key, value] of Object.entries(micropubRequest)) {
+      const values = Array.isArray(value) ? value : [value];
+      if (!values.some((item) => item instanceof File)) continue;
+      if (key !== 'photo') invalid('Only photo uploads are supported');
+      micropubRequest[key] = await Promise.all(
+        values.map(async (item) => {
+          if (!(item instanceof File)) return item;
+          if (!item.type.startsWith('image/')) error(415, 'File must be an image');
+          const filename = `${crypto.randomUUID()}-${item.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`;
+          return backend.uploadImage(filename, Buffer.from(await item.arrayBuffer()), item.type);
+        })
+      );
+    }
+
     // Parse Micropub request to blog post data
     const post = parseMicropubRequest(micropubRequest);
+
+    const usedSlugs = new Set((await backend.listBlogPosts()).map((file) => file.slug));
+    const requestedSlug = post.slug;
+    while (
+      usedSlugs.has(post.slug) ||
+      (await backend.fileExists(`.micropub/deleted/${post.slug}.json`))
+    ) {
+      post.slug = `${requestedSlug}-${crypto.randomUUID()}`;
+    }
 
     // Generate file path and content
     const filePath = generateFilePath(post);
@@ -89,6 +149,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
 
     // Check if file already exists
     const exists = await backend.fileExists(filePath);
+    if (exists) error(409, 'Post already exists');
 
     // Create or update file via storage backend
     const commitMessage = generateCommitMessage(post, exists);

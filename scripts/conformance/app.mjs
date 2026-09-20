@@ -35,7 +35,11 @@ const vite = await createServer({
 await vite.listen();
 const { storeAccessToken } = await vite.ssrLoadModule('/src/lib/server/token-store.ts');
 const tokens = {
-  create: storeAccessToken('local-fake-github-token', process.env.PUBLIC_SITE_URL, 'create'),
+  create: storeAccessToken(
+    'local-fake-github-token',
+    process.env.PUBLIC_SITE_URL,
+    'create update delete undelete'
+  ),
   restricted: storeAccessToken('local-fake-github-token', process.env.PUBLIC_SITE_URL, '')
 };
 await mkdir(resolve(runDir, 'src/content/blog'), { recursive: true });

@@ -195,7 +195,11 @@
       description = frontmatter.description || '';
       published = frontmatter.published ?? false;
       categories = frontmatter.categories?.join(', ') || '';
-      content = postContent;
+      const originalContent = frontmatter.micropub?.properties?.content?.[0];
+      content =
+        typeof originalContent === 'string'
+          ? originalContent
+          : (originalContent?.html ?? originalContent?.text ?? postContent);
       currentPath = path;
       autoSlug = false; // Don't auto-generate slug for existing posts
 
@@ -272,27 +276,36 @@
         postDate = new Date().toISOString().split('T')[0];
       }
 
+      const postUrl = currentPath
+        ? `${data.siteUrl}/blog/${currentPath
+            .split('/')
+            .pop()!
+            .replace(/^\d{4}-\d{2}-\d{2}-/, '')
+            .replace(/\.md$/, '')}`
+        : '';
+      const properties = {
+        name: [title],
+        content: [content],
+        slug: [slug],
+        description: description ? [description] : [],
+        category: categories ? categories.split(',').map((c) => c.trim()) : [],
+        published: [postDate],
+        'post-status': [published ? 'published' : 'draft']
+      };
       const response = await fetch('/micropub', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          type: ['h-entry'],
-          properties: {
-            name: [title],
-            content: [content],
-            slug: [slug],
-            description: description ? [description] : undefined,
-            category: categories ? categories.split(',').map((c) => c.trim()) : undefined,
-            published: [postDate],
-            'post-status': [published ? 'published' : 'draft']
-          }
-        })
+        body: JSON.stringify(
+          currentPath
+            ? { action: 'update', url: postUrl, replace: properties }
+            : { type: ['h-entry'], properties }
+        )
       });
 
       if (response.ok) {
-        const location = response.headers.get('Location');
+        const location = response.headers.get('Location') || postUrl;
         success = currentPath
           ? `Post updated successfully! View at: ${location}`
           : `Post created successfully! View at: ${location}`;
@@ -302,6 +315,8 @@
         if (!currentPath) {
           // Extract path from location or construct it
           const datePrefix = postDate;
+          slug = new URL(location).pathname.split('/').pop()!;
+          autoSlug = false;
           currentPath = `src/content/blog/${datePrefix}-${slug}.md`;
         }
       } else {

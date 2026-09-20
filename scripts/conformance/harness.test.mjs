@@ -76,3 +76,42 @@ describe('upstream assertion harness', () => {
     expect(result.status).toBe('pass');
   });
 });
+
+test('a failed content judgment cannot produce a passing conformance result', async () => {
+  const result = await runTest({
+    ...context,
+    number: 101,
+    localFetch: async () =>
+      new Response(null, {
+        status: 201,
+        headers: { Location: `${context.fixtureOrigin}/blog/test` }
+      }),
+    judge: async () => {
+      throw new Error('Stored categories are missing');
+    }
+  });
+  expect(result.status).toBe('fail');
+  expect(result.judgments[0].passed).toBe(false);
+});
+
+test('802 uses body-only authentication for creation and header authentication for source', async () => {
+  const result = await runTest({
+    ...context,
+    number: 802,
+    localFetch: async (_url, init) => {
+      if (init.method === 'POST') {
+        expect(init.headers.has('Authorization')).toBe(false);
+        expect(new URLSearchParams(init.body).get('access_token')).toBe(context.tokens.create);
+        return new Response(null, {
+          status: 201,
+          headers: { Location: `${context.fixtureOrigin}/blog/test` }
+        });
+      }
+      expect(init.headers.get('Authorization')).toBe(`Bearer ${context.tokens.create}`);
+      return Response.json({
+        properties: { content: ['Testing accepting access token in post body'] }
+      });
+    }
+  });
+  expect(result.status).toBe('pass');
+});

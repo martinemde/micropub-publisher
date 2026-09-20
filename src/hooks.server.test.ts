@@ -12,6 +12,7 @@ import { GET, POST } from './routes/micropub/+server';
 import { POST as upload } from './routes/micropub/media/+server';
 import { setSession } from '$lib/server/auth';
 import { clearAllTokens, storeAccessToken } from '$lib/server/token-store';
+import matter from 'gray-matter';
 
 // Fake GitHub at the external API boundary; keep the storage implementation real.
 const githubWrites = vi.hoisted(() => new Map<string, string>());
@@ -24,8 +25,19 @@ vi.mock('@octokit/rest', () => ({
     };
     repos = {
       get: async () => ({ data: { owner: { login: 'test_owner' } } }),
-      getContent: async () => {
+      getContent: async ({ path }: { path: string }) => {
+        if (path === 'src/content/blog')
+          return {
+            data: [...githubWrites.keys()]
+              .filter((path) => path.startsWith('src/content/blog/'))
+              .map((path) => ({ type: 'file', name: path.split('/').pop(), path }))
+          };
+        if (githubWrites.has(path))
+          return { data: { sha: 'fake-sha', content: githubWrites.get(path) } };
         throw Object.assign(new Error('Not found'), { status: 404 });
+      },
+      deleteFile: async ({ path }: { path: string }) => {
+        githubWrites.delete(path);
       },
       createOrUpdateFileContents: async ({ path, content }: { path: string; content: string }) => {
         githubWrites.set(path, content);
@@ -402,8 +414,8 @@ describe('Micropub transport through server hooks', () => {
 describe('Requested scope survives authorization and token exchange', () => {
   it.each([
     ['create', 'create'],
-    ['create update delete', 'create'],
-    ['update', ''],
+    ['create update delete', 'create update delete'],
+    ['update', 'update'],
     ['', ''],
     ['recreate', '']
   ])('requests %j and grants %j', async (requested, granted) => {
@@ -455,7 +467,98 @@ describe('Requested scope survives authorization and token exchange', () => {
       headers: { Authorization: `Bearer ${result.access_token}` },
       body: new URLSearchParams({ h: 'entry', content: 'Authorized post' })
     });
-    expect(published.response.status).toBe(granted === 'create' ? 201 : 401);
-    expect(githubWrites.size).toBe(granted === 'create' ? 1 : 0);
+    expect(published.response.status).toBe(granted.split(' ').includes('create') ? 201 : 401);
+    expect(githubWrites.size).toBe(granted.split(' ').includes('create') ? 1 : 0);
+  });
+});
+
+describe('Stored Micropub lifecycle through the app boundary', () => {
+  beforeEach(() => {
+    env.MICROPUB_BACKEND = 'github';
+  });
+  const send = async (body: object, bearer: string) =>
+    (
+      await request('/micropub', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+    ).response;
+  it('keeps repeated creates distinct and enforces each mutation scope', async () => {
+    const properties = { name: ['A post'], content: ['Original'], category: ['a', 'b'] };
+    const first = await send({ type: ['h-entry'], properties }, token);
+    const second = await send({ type: ['h-entry'], properties }, token);
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(first.headers.get('Location')).not.toBe(second.headers.get('Location'));
+    expect(githubWrites.size).toBe(2);
+    const url = first.headers.get('Location');
+    for (const action of ['update', 'delete', 'undelete']) {
+      const rejected = await send({ action, url, replace: { content: ['Changed'] } }, token);
+      expect(rejected.status).toBe(401);
+      expect(await rejected.json()).toMatchObject({ error: 'insufficient_scope', scope: action });
+    }
+    const editor = storeAccessToken('fake', 'https://example.com/', 'update delete undelete');
+    const updated = await send(
+      {
+        action: 'update',
+        url,
+        replace: { content: ['Changed'] },
+        add: { category: ['c'] },
+        delete: { category: ['b'] }
+      },
+      editor
+    );
+    expect(updated.status).toBe(204);
+    const query = await request(`/micropub?${new URLSearchParams({ q: 'source', url: url! })}`, {
+      headers: { Authorization: `Bearer ${editor}` }
+    });
+    expect((await query.response.json()).properties).toEqual({
+      name: ['A post'],
+      content: ['Changed'],
+      category: ['a', 'c']
+    });
+    const before = new Map(githubWrites);
+    expect((await send({ action: 'delete', url }, editor)).status).toBe(204);
+    expect(
+      [...githubWrites.keys()].filter((path) => path.startsWith('src/content/blog/'))
+    ).toHaveLength(1);
+    expect(
+      (
+        await request(`/micropub?${new URLSearchParams({ q: 'source', url: url! })}`, {
+          headers: { Authorization: `Bearer ${editor}` }
+        })
+      ).response.status
+    ).toBe(404);
+    expect((await send({ action: 'undelete', url }, editor)).status).toBe(204);
+    expect(githubWrites).toEqual(before);
+  });
+  it('preserves punctuation and repeated categories without retaining credentials', async () => {
+    const body = new URLSearchParams({ h: 'entry', content: 'Body', access_token: token });
+    body.append('category[]', 'one, two');
+    body.append('category[]', 'key: value');
+    const { response } = await request('/micropub', { method: 'POST', body });
+    expect(response.status).toBe(201);
+    const source = Buffer.from([...githubWrites.values()][0], 'base64').toString();
+    const parsed = matter(source);
+    expect(parsed.data.categories).toEqual(['one, two', 'key: value']);
+    expect(parsed.data.micropub.properties).toEqual({
+      content: ['Body'],
+      category: ['one, two', 'key: value']
+    });
+    expect(source).not.toContain(token);
+  });
+  it('rejects invalid updates without modifying any files', async () => {
+    const created = await send({ properties: { content: ['Keep me'] } }, token);
+    const url = created.headers.get('Location');
+    const editor = storeAccessToken('fake', 'https://example.com/', 'update');
+    for (const operation of [
+      { replace: { content: 'wrong shape' } },
+      { add: null },
+      { delete: [null] },
+      { replace: { access_token: ['secret'] } }
+    ]) {
+      expect((await send({ action: 'update', url, ...operation }, editor)).status).toBe(400);
+    }
   });
 });

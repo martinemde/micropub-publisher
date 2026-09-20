@@ -8,6 +8,7 @@ import { expectHttpError } from '$lib/test-helpers';
 vi.mock('$lib/server/storage/factory', () => ({
   createStorageBackend: vi.fn(() => ({
     createOrUpdateFile: vi.fn().mockResolvedValue(undefined),
+    listBlogPosts: vi.fn().mockResolvedValue([]),
     fileExists: vi.fn().mockResolvedValue(false)
   }))
 }));

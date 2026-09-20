@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/public';
 import { requireEnvironmentVariable } from '../env';
-import { writeFile, access, mkdir, readFile, readdir } from 'node:fs/promises';
+import { writeFile, access, mkdir, readFile, readdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { cwd } from 'node:process';
 import { hasErrorCode, type StorageBackend, type BlogPostFileInfo } from './types';
@@ -14,6 +14,9 @@ import { hasErrorCode, type StorageBackend, type BlogPostFileInfo } from './type
  * - Images: static/images/blog/
  */
 export class FileStorageBackend implements StorageBackend {
+  async deleteFile(path: string, _message: string): Promise<void> {
+    await unlink(this.resolvePath(path));
+  }
   private projectRoot: string;
 
   constructor() {

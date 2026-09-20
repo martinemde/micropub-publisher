@@ -58,7 +58,15 @@ export async function renderTest(directory, number, endpoint, token, fixtureOrig
   });
 }
 
-export async function runTest({ directory, number, endpoint, tokens, fixtureOrigin, localFetch }) {
+export async function runTest({
+  directory,
+  number,
+  endpoint,
+  tokens,
+  fixtureOrigin,
+  localFetch,
+  judge
+}) {
   const html = await renderTest(directory, number, endpoint, tokens.create, fixtureOrigin);
   const errors = [];
   const virtualConsole = new VirtualConsole();
@@ -70,6 +78,7 @@ export async function runTest({ directory, number, endpoint, tokens, fixtureOrig
   });
   const { window } = dom;
   const requests = [];
+  const judgments = [];
   let verdict = 0;
   const pending = new Set();
   try {
@@ -97,7 +106,9 @@ export async function runTest({ directory, number, endpoint, tokens, fixtureOrig
           }
         } else if (path === '/server-tests/micropub') {
           const headers = new Headers();
-          if (!params.skipauth)
+          // Upstream 802 describes body-only authentication but omits skipauth.
+          // Correct that transport error; keep its source/token assertions intact.
+          if (!params.skipauth && !(number === 802 && params.method === 'post'))
             headers.set('Authorization', `Bearer ${params.access_token ?? tokens.create}`);
           const init = {
             method: params.method === 'get' ? 'GET' : 'POST',
@@ -175,13 +186,32 @@ export async function runTest({ directory, number, endpoint, tokens, fixtureOrig
     await new Promise((resolve) => $(resolve));
     if (number === 804) $('#access-token-input').val(tokens.restricted).trigger('change');
     const clicked = new Set();
-    for (let stage = 0; stage < 6; stage++) {
+    for (let stage = 0; stage < 10; stage++) {
       const button = [...window.document.querySelectorAll('button[id^="run"]')].find(
         (el) => !clicked.has(el.id) && !el.closest('.hidden') && !el.classList.contains('disabled')
       );
-      if (!button) break;
-      clicked.add(button.id);
-      $(button).trigger('click');
+      const prompt =
+        judge &&
+        [...window.document.querySelectorAll('.prompt')].find(
+          (el) => !clicked.has(el.id) && !el.closest('.hidden')
+        );
+      if (!button && !prompt) break;
+      if (button) {
+        clicked.add(button.id);
+        $(button).trigger('click');
+      } else {
+        clicked.add(prompt.id);
+        try {
+          const evidence = await judge({ number, id: prompt.id, requests });
+          judgments.push({ check: prompt.id, passed: true, evidence });
+          $(prompt).trigger('click');
+        } catch (err) {
+          judgments.push({ check: prompt.id, passed: false, evidence: err.message });
+          $(prompt).addClass('red');
+          verdict = -1;
+          break;
+        }
+      }
       while (pending.size) await Promise.all([...pending]);
       // Media tests register the second click handler from a ready callback.
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -199,7 +229,16 @@ export async function runTest({ directory, number, endpoint, tokens, fixtureOrig
         : verdict === 1
           ? 'pass'
           : 'pending';
-    return { number, status, failedChecks, manualChecks, errors, requests, html: dom.serialize() };
+    return {
+      number,
+      status,
+      failedChecks,
+      manualChecks,
+      judgments,
+      errors,
+      requests,
+      html: dom.serialize()
+    };
   } finally {
     window.close();
   }

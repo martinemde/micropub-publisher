@@ -11,6 +11,21 @@ import { requireEnvironmentVariable } from '../env';
  * All operations create commits in the GitHub repository.
  */
 export class GitHubStorageBackend implements StorageBackend {
+  async deleteFile(path: string, message: string): Promise<void> {
+    const { data } = await this.octokit.repos.getContent({
+      owner: this.owner,
+      repo: this.repo,
+      path
+    });
+    if (!('sha' in data)) throw new Error('Expected a file');
+    await this.octokit.repos.deleteFile({
+      owner: this.owner,
+      repo: this.repo,
+      path,
+      message,
+      sha: data.sha
+    });
+  }
   private octokit: Octokit;
   private owner: string;
   private repo: string;

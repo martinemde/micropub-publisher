@@ -1,30 +1,13 @@
+import { error } from '@sveltejs/kit';
+import matter from 'gray-matter';
 import { env } from '$env/dynamic/private';
 import { requireEnvironmentVariable } from './env';
 
-export interface MicropubProperties {
-  name?: string | string[];
-  content?: string | string[] | { html?: string; text?: string }[];
-  category?: string | string[];
-  published?: string | string[];
-  slug?: string | string[];
-  description?: string | string[];
-  'post-status'?: string | string[];
-}
-
+export type MicropubProperties = Record<string, unknown[]>;
 export interface MicropubRequest {
-  type?: string[];
-  properties?: MicropubProperties;
-  h?: string;
-  // Form-encoded properties
-  name?: string;
-  content?: string;
-  category?: string;
-  published?: string;
-  slug?: string;
-  description?: string;
-  'post-status'?: string;
+  properties?: Record<string, unknown>;
+  [key: string]: unknown;
 }
-
 export interface BlogPost {
   title: string;
   content: string;
@@ -34,146 +17,136 @@ export interface BlogPost {
   description?: string;
   author: string;
   categories?: string[];
+  properties: MicropubProperties;
 }
-
-/**
- * Normalize a property value to a single string
- */
-function normalizeProperty(value: string | string[] | undefined, defaultValue = ''): string {
-  if (!value) return defaultValue;
-  if (Array.isArray(value)) return value[0] || defaultValue;
-  return value;
+const reserved = new Set([
+  'access_token',
+  'h',
+  'type',
+  'action',
+  'url',
+  'replace',
+  'add',
+  'delete'
+]);
+export function invalid(message: string): never {
+  error(400, { message, error: 'invalid_request' });
 }
-
-/**
- * Normalize content property which can be string, array, or object
- */
-function normalizeContent(
-  content: string | string[] | { html?: string; text?: string }[] | undefined
-): string {
-  if (!content) return '';
-
-  if (typeof content === 'string') {
-    return content;
+export function normalizeProperties(input: Record<string, unknown>): MicropubProperties {
+  return Object.fromEntries(
+    Object.entries(input)
+      .filter(([key]) => !reserved.has(key) && !key.startsWith('mp-'))
+      .map(([key, value]) => [key, Array.isArray(value) ? value : [value]])
+  );
+}
+const first = (properties: MicropubProperties, key: string, fallback = ''): string => {
+  const value = properties[key]?.[0];
+  return typeof value === 'string' ? value : fallback;
+};
+const escapeAttribute = (value: string) =>
+  value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+function photoMarkup(value: unknown): string {
+  const photo =
+    typeof value === 'string'
+      ? { value, alt: '' }
+      : (value as { value?: unknown; alt?: unknown } | null);
+  if (!photo || typeof photo.value !== 'string') invalid('Invalid photo');
+  let url: URL;
+  try {
+    url = new URL(photo.value);
+  } catch {
+    invalid('Photo URL must be absolute');
   }
-
-  if (Array.isArray(content)) {
-    // Handle array of content objects
-    if (typeof content[0] === 'string') {
-      return content[0];
-    }
-    // Handle { html, text } format
-    if (typeof content[0] === 'object') {
-      return content[0].text || content[0].html || '';
-    }
-  }
-
-  return '';
+  if (!['http:', 'https:'].includes(url.protocol)) invalid('Invalid photo URL scheme');
+  return `<img src="${escapeAttribute(photo.value)}" alt="${escapeAttribute(typeof photo.alt === 'string' ? photo.alt : '')}" />`;
 }
-
-/**
- * Normalize categories which can be string or array
- */
-function normalizeCategories(category: string | string[] | undefined): string[] | undefined {
-  if (!category) return undefined;
-  if (Array.isArray(category)) return category;
-  return category.split(',').map((c) => c.trim());
-}
-
-/**
- * Generate a slug from a title
- */
-function generateSlug(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-/**
- * Parse Micropub request to blog post data
- */
 export function parseMicropubRequest(request: MicropubRequest): BlogPost {
-  // Support both JSON format (properties) and form-encoded format (direct fields)
-  const props = request.properties || {};
-
-  const title = normalizeProperty(props.name || request.name) || 'Untitled Post';
-  const content = normalizeContent(props.content || request.content);
-  const rawSlug = normalizeProperty(props.slug || request.slug);
-  const slug = rawSlug || generateSlug(title);
-  const rawPublished = normalizeProperty(props.published || request.published);
-  const date = rawPublished || new Date().toISOString();
-  const description = normalizeProperty(props.description || request.description);
-  const categories = normalizeCategories(props.category || request.category);
-  const postStatus = normalizeProperty(props['post-status'] || request['post-status']);
-
+  if (
+    Object.hasOwn(request, 'properties') &&
+    (!request.properties ||
+      typeof request.properties !== 'object' ||
+      Array.isArray(request.properties))
+  )
+    invalid('Expected properties object');
+  if (
+    request.type !== undefined &&
+    (!Array.isArray(request.type) || request.type.length !== 1 || request.type[0] !== 'h-entry')
+  )
+    invalid('Only h-entry is supported');
+  if (request.h !== undefined && request.h !== 'entry') invalid('Only h-entry is supported');
+  const properties = normalizeProperties(request.properties ?? request);
+  const title = first(properties, 'name', 'Untitled Post');
+  const rawSlug = first(properties, 'slug');
+  const slug =
+    rawSlug ||
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') ||
+    'post';
+  if (!/^[a-zA-Z0-9]+(?:[-_][a-zA-Z0-9]+)*$/.test(slug)) invalid('Invalid slug');
+  const date = first(properties, 'published', new Date().toISOString());
+  if (!Number.isFinite(Date.parse(date))) invalid('Invalid published date');
+  const value = properties.content?.[0];
+  let content = typeof value === 'string' ? value : '';
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const rich = value as { html?: unknown; text?: unknown };
+    content =
+      typeof rich.html === 'string' ? rich.html : typeof rich.text === 'string' ? rich.text : '';
+  }
+  const photos = (properties.photo ?? []).map(photoMarkup);
+  if (photos.length) content += `\n\n${photos.join('\n\n')}`;
   return {
     title,
     content,
     slug,
     date,
-    published: postStatus === 'published', // Use post-status to determine published state
-    description: description || undefined,
+    published: first(properties, 'post-status', 'published') === 'published',
+    description: first(properties, 'description') || undefined,
     author: requireEnvironmentVariable('GITHUB_OWNER', env.GITHUB_OWNER),
-    categories
+    categories: properties.category?.filter((value): value is string => typeof value === 'string'),
+    properties
   };
 }
-
-/**
- * Convert blog post data to markdown file content with frontmatter
- */
 export function generateMarkdownFile(post: BlogPost): string {
-  const frontmatter: string[] = ['---'];
-
-  // Add required fields
-  frontmatter.push(`title: '${post.title.replace(/'/g, "''")}'`);
-  frontmatter.push(`date: ${post.date}`);
-  frontmatter.push(`author: ${post.author}`);
-
-  // Add optional description
-  if (post.description) {
-    frontmatter.push(`description: '${post.description.replace(/'/g, "''")}'`);
-  }
-
-  // Add published status
-  frontmatter.push(`published: ${post.published}`);
-
-  // Add slug
-  frontmatter.push(`slug: ${post.slug}`);
-
-  // Add categories if present
-  if (post.categories && post.categories.length > 0) {
-    frontmatter.push('categories:');
-    post.categories.forEach((cat) => {
-      frontmatter.push(`  - ${cat}`);
-    });
-  }
-
-  frontmatter.push('---');
-  frontmatter.push('');
-
-  // Add content
-  return frontmatter.join('\n') + post.content + '\n';
+  const data = Object.fromEntries(
+    Object.entries({
+      title: post.title,
+      date: post.date,
+      author: post.author,
+      description: post.description,
+      published: post.published,
+      slug: post.slug,
+      categories: post.categories,
+      micropub: { type: ['h-entry'], properties: post.properties }
+    }).filter(([, value]) => value !== undefined)
+  );
+  return matter.stringify(post.content + '\n', data);
 }
-
-/**
- * Generate file path for a blog post
- */
+export function readProperties(source: string): MicropubProperties {
+  const { data, content } = matter(source);
+  if (data.micropub?.properties) return normalizeProperties(data.micropub.properties);
+  return normalizeProperties(
+    Object.fromEntries(
+      Object.entries({
+        name: data.title,
+        content,
+        category: data.categories,
+        slug: data.slug,
+        published: data.date instanceof Date ? data.date.toISOString() : data.date,
+        description: data.description,
+        'post-status': data.published ? 'published' : 'draft'
+      }).filter(([, value]) => value !== undefined)
+    )
+  );
+}
 export function generateFilePath(post: BlogPost): string {
-  // Parse the date to get year, month, day
-  const date = new Date(post.date);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-
-  // Format: src/content/blog/YYYY-MM-DD-slug.md
-  return `src/content/blog/${year}-${month}-${day}-${post.slug}.md`;
+  return `src/content/blog/${new Date(post.date).toISOString().slice(0, 10)}-${post.slug}.md`;
 }
-
-/**
- * Generate commit message for a blog post
- */
 export function generateCommitMessage(post: BlogPost, isUpdate = false): string {
-  const action = isUpdate ? 'Update' : 'Add';
-  return `${action} post: ${post.title}`;
+  return `${isUpdate ? 'Update' : 'Add'} post: ${post.title}`;
 }

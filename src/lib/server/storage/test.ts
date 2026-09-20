@@ -7,6 +7,9 @@ import type { StorageBackend, BlogPostFileInfo } from './types';
  * Provides additional inspection methods for test assertions.
  */
 export class TestStorageBackend implements StorageBackend {
+  async deleteFile(path: string, _message: string): Promise<void> {
+    if (!this.files.delete(path)) throw new Error('File not found');
+  }
   private files = new Map<string, string>();
   private images = new Map<string, Buffer>();
 

@@ -29,7 +29,10 @@ export const GET: RequestHandler = async (event) => {
   const codeChallengeMethod = url.searchParams.get('code_challenge_method');
   const responseType = url.searchParams.get('response_type');
   // Grant only supported permissions explicitly requested by this client.
-  const scope = (url.searchParams.get('scope') || '').split(' ').includes('create') ? 'create' : '';
+  const requestedScopes = (url.searchParams.get('scope') || '').split(' ');
+  const scope = ['create', 'update', 'delete', 'undelete']
+    .filter((scope) => requestedScopes.includes(scope))
+    .join(' ');
 
   // Validate required parameters
   if (!me || !clientId || !redirectUri || !state) {

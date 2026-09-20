@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { revision, runTest } from './upstream.mjs';
+import { createJudge } from './judgment.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const directory = join(root, '.conformance/upstream');
@@ -133,10 +134,19 @@ try {
   if (!tokens) throw new Error('Conformance app startup timed out');
   await rm(join(appDir, 'tokens.json'));
   console.log(`micropub.rocks ${revision}\nApp: ${appOrigin}\nArtifacts: ${runDir}`);
+  const judge = createJudge(appDir, directory);
   for (const number of selected) {
     let result;
     try {
-      result = await runTest({ directory, number, endpoint, tokens, fixtureOrigin, localFetch });
+      result = await runTest({
+        directory,
+        number,
+        endpoint,
+        tokens,
+        fixtureOrigin,
+        localFetch,
+        judge
+      });
     } catch (err) {
       result = { number, status: 'error', errors: [err.stack ?? String(err)] };
     }

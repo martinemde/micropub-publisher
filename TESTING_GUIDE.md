@@ -46,17 +46,21 @@ visible as failures. File 805 is included even though upstream's database seed
 omits it; its assertion expects the literal error string `bad request`, which differs
 from Micropub's `invalid_request`. Preserve that distinction when fixing the app.
 
-The initial local baseline is 8 passes, 18 failures, 9 pending checks, and no harness
-errors. Failures cover multipart creation, updates/deletes, source queries, media
-retrieval (the file backend returns relative URLs), and duplicate token transport.
-Test 405 passes because unsupported updates already return 400; that is not evidence
-that editing works. The nine pending cases require manual content inspection.
+The local suite passes all 35 in-scope cases. Case 601 (syndication) is excluded.
+Manual checks are judged against the actual generated files: canonical properties,
+blog frontmatter, content/HTML, photo URLs and alt text, uploaded bytes, absence of
+deleted post files, and byte-for-byte restoration. Reports retain each judgment's
+evidence. These checks verify publisher output, not the deployed blog theme.
 
-A future GitHub Actions job can run `bun install --frozen-lockfile`,
-`bun run conformance:setup`, and `bun run conformance`, then upload the current run's
-`summary.json` and per-case artifacts even on failure. Do not mask its exit code or
-count pending checks as passes. No workflow has been added while this baseline is
-still failing.
+Case 802 has one documented transport correction: its template describes body-only
+authentication but omits `skipauth`, causing upstream's proxy to add a duplicate
+header token. The local runner omits that header on its create request; the source
+query and all upstream assertions remain unchanged. Case 805 still verifies that
+actual duplicate transports are rejected. No upstream source files are edited.
+
+A GitHub Actions job can run `bun install --frozen-lockfile`,
+`bun run conformance:setup`, and `bun run conformance`. Preserve the exit status and
+upload the current run's reports on failure. Pending judgments never count as passes.
 
 ## Local verification
 
@@ -79,45 +83,32 @@ cookie. CORS permits browser clients to send Authorization and read Location;
 it does not enable credentialed cross-origin cookie access. Other routes retain
 CSRF protection.
 
-## Suite mapping and known gaps
+## Conformance implementation
 
-Test numbers refer to the upstream [micropub.rocks server test definitions](https://github.com/aaronpk/micropub.rocks/blob/main/database/data.sql).
-These are code-review findings supplemented by the local baseline above, not
-recorded passes from the hosted suite.
+Form and JSON creation preserve repeated categories and nested property values.
+Photos support URLs, alt text, and multipart uploads. Markdown retains the original
+Micropub properties under `micropub` in YAML frontmatter for source queries and edits;
+authentication and protocol control fields are excluded. Nested objects are retained
+as data; this does not implement location discovery or rendering.
 
-- 100, 200 (basic form/JSON creation): handlers exist. Posts without a name all
-  get `untitled-post`; repeated creates on the same date overwrite that file.
-  Posts default to `published: false`, so a successful 201 does not mean a post
-  is visible on the blog.
-- 101, 107, 201 (categories): JSON arrays work, but form `category[]` is not
-  decoded and `Object.fromEntries` loses repeated values. Plain category values
-  are incorrectly split on commas.
-- 202 (HTML content): HTML is stored verbatim in Markdown. Verify the blog's
-  rendering and sanitization before claiming a pass.
-- 104, 203–206 (photo URLs, alt text, nested objects): these properties are ignored.
-- 300–301 (inline multipart): unsupported at `/micropub`. A separate media
-  endpoint is advertised; clients should upload there first.
-- 400–405, 500–503 (update/delete/undelete): unsupported. Explicit actions
-  (including malformed values) now return 400 `invalid_request` without writes.
-- 600 (configuration): implemented, including the separate publisher origin.
-  601 (`q=syndicate-to`) and 602–603 (`q=source`) are unsupported.
-- 700–702 (media): hook regressions cover authenticated JPEG/PNG/GIF requests.
-  Header/body tokens require `create` scope. Validation errors retain their
-  400/415 status instead of becoming 500 responses.
-- 800–804 (authentication): hook regressions cover header/body tokens and
-  rejection of missing/invalid tokens. Creation and uploads require the exact
-  `create` scope; configuration queries need only a valid token. Explicit tokens
-  take precedence over session cookies, so invalid/restricted tokens cannot
-  fall back to a more privileged session. Authorization grants only requested
-  `create` access and binds it to the sealed code; the token exchange cannot
-  broaden it. Missing scopes, including old authorization codes without a scope,
-  grant no publishing permission. Tokens issued before this change retain their
-  stored scopes until expiry, revocation, or restart. Stored identity is still
-  not rechecked by Micropub handlers.
+Create requests allocate distinct slugs when the requested slug is already used,
+including another publication date or an archived deletion. The editor uses explicit
+updates and retains the returned slug. Posts default to published; explicit drafts
+remain drafts. HTML is preserved for the blog renderer to handle.
 
-The next conformance slice is create serialization and collision handling.
-Scope failures use HTTP 401 `insufficient_scope` with `scope: "create"`, as defined
-by [Micropub error responses](https://www.w3.org/TR/micropub/#error-response).
+Updates support replace/add/delete and source queries support property filtering.
+Delete first saves a recovery copy in `.micropub/deleted/<slug>.json`, outside the blog
+content directory, then removes the live file. Undelete restores the exact original
+and removes the recovery copy. GitHub storage uses separate commits for these steps:
+an interrupted delete can leave both copies (retry deletion); an interrupted archive
+cleanup after undelete can leave a recovery copy alongside the restored post. Do not
+interpret an API failure as proof no storage operation occurred.
+
+Tokens require the matching create/update/delete/undelete scope for each action.
+Authorization grants only requested supported scopes and token exchange cannot
+broaden them. Configuration/source queries require authentication. Duplicate token
+transports return 400. Scope failures use HTTP 401 `insufficient_scope`, following
+[Micropub error responses](https://www.w3.org/TR/micropub/#error-response).
 
 ## Next milestone after conformance
 

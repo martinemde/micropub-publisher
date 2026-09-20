@@ -39,6 +39,7 @@ export interface BlogPostFileInfo {
  * to store blog posts and images.
  */
 export interface StorageBackend {
+  deleteFile(path: string, message: string): Promise<void>;
   /**
    * Create or update a file at the given path
    *
