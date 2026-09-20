@@ -13,7 +13,9 @@
     "format": "prettier --log-level silent --list-different --write .",
     "lint": "prettier --check . && eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "conformance:setup": "bun scripts/conformance/setup.mjs",
+    "conformance": "bun scripts/conformance/run.mjs"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",

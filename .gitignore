@@ -25,3 +25,6 @@ vite.config.ts.timestamp-*
 
 # Claude Code scratch worktrees
 .claude/worktrees/
+
+# Downloaded conformance suite and isolated local runs
+/.conformance/

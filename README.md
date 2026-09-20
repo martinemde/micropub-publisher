@@ -42,6 +42,12 @@ bun run build
 
 Tests fake GitHub and other external services at the application boundary. They do not access a network, account, or repository.
 
+For the independent upstream conformance tests, run `bun run conformance:setup`
+once, then `bun run conformance`. This starts an isolated local app, runs the
+pinned micropub.rocks browser assertions over HTTP, and saves artifacts under
+`.conformance/runs/`. Failures and manual checks produce a nonzero exit code.
+See `TESTING_GUIDE.md` for the current baseline and limitations.
+
 ## Deploy
 
 Build and run this as one long-lived Bun or Node process:
