@@ -5,6 +5,7 @@ import { env as publicEnv } from '$env/dynamic/public';
 import { requestUserToken, storeGithubCredential, hasGithubCredential } from './github-user-token';
 import type { RequestEvent } from '@sveltejs/kit';
 import { requireEnvironmentVariable } from './env';
+import { stateMap } from './state';
 
 export interface SessionData {
   user?: {
@@ -165,16 +166,16 @@ export async function createAuthCode(data: Omit<AuthCode, 'issuedAt'>): Promise<
 }
 
 // Store for used authorization codes (prevents replay attacks)
-const usedAuthCodes = new Set<string>();
+const usedAuthCodes = stateMap<number>('used-auth-codes');
 
 /**
  * Verify and decode an IndieAuth authorization code
  * Ensures codes can only be used once
  */
 export async function verifyAuthCode(code: string): Promise<AuthCode | null> {
-  // Check if code has already been used
-  if (usedAuthCodes.has(code)) {
-    return null;
+  const codeHash = createHash('sha256').update(code).digest('hex');
+  for (const [key, expiresAt] of usedAuthCodes) {
+    if (expiresAt <= Date.now()) usedAuthCodes.delete(key);
   }
 
   try {
@@ -194,12 +195,9 @@ export async function verifyAuthCode(code: string): Promise<AuthCode | null> {
     }
 
     // Mark code as used
-    usedAuthCodes.add(code);
-
-    // Clean up old codes after 15 minutes (longer than TTL to prevent race conditions)
-    setTimeout(() => {
-      usedAuthCodes.delete(code);
-    }, 900000);
+    // Check and consume together after the asynchronous unseal.
+    if (usedAuthCodes.has(codeHash)) return null;
+    usedAuthCodes.set(codeHash, data.issuedAt + 900000);
 
     return data;
   } catch {

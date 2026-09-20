@@ -2,8 +2,10 @@
  * Token Storage
  *
  * Maps IndieAuth access tokens to GitHub tokens.
- * Uses in-memory storage (tokens are lost on server restart).
+ * Uses Durable Object storage in production, memory in local development.
  */
+
+import { stateMap } from './state';
 
 interface StoredToken {
   githubToken: string;
@@ -13,8 +15,7 @@ interface StoredToken {
   expiresAt: number;
 }
 
-// In-memory token storage
-const tokenStore = new Map<string, StoredToken>();
+const tokenStore = stateMap<StoredToken>('micropub-tokens');
 
 /**
  * Generate a cryptographically random token ID
@@ -29,6 +30,7 @@ function generateTokenId(): string {
  * Store a new access token
  */
 export function storeAccessToken(githubToken: string, me: string, scope: string): string {
+  cleanupExpiredTokens();
   const tokenId = generateTokenId();
   const now = Date.now();
   const ttl = 60 * 60 * 24 * 30 * 1000; // 30 days in milliseconds
@@ -118,9 +120,4 @@ export function cleanupExpiredTokens(): number {
  */
 export function clearAllTokens(): void {
   tokenStore.clear();
-}
-
-// Run cleanup every hour
-if (typeof setInterval !== 'undefined') {
-  setInterval(cleanupExpiredTokens, 60 * 60 * 1000);
 }

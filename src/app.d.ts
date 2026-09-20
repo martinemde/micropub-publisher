@@ -2,6 +2,11 @@
 // for information about these interfaces
 declare global {
   namespace App {
+    interface Platform {
+      env: {
+        PUBLISHER_STATE?: { getMap<T>(name: string): Map<string, T> };
+      };
+    }
     interface Error {
       error?: string;
       scope?: string;

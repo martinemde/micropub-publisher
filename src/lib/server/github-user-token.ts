@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { requireEnvironmentVariable } from './env';
+import { stateMap } from './state';
 
 type Credential = {
   accessToken: string;
@@ -11,7 +12,7 @@ type Credential = {
 };
 // Shared references let editor and Micropub sessions use the same rotated token.
 // Credentials never leave the server in cookies or IndieAuth authorization codes.
-const credentials = new Map<string, Credential>();
+const credentials = stateMap<Credential>('github-credentials');
 const prefix = 'github-user:';
 
 export async function requestUserToken(parameters: Record<string, string>): Promise<Credential> {
