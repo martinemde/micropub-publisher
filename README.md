@@ -12,6 +12,21 @@ This was extracted from `martinemde.com` at commit `964f9969d271`. `PUBLIC_APP_U
 - `/editor`
 - `/api/posts` and `/api/posts/read`
 
+The editor has Article, Note, Bookmark, and Photo composers. New drafts are kept
+separately per type in local storage, so switching composers preserves unfinished
+work. Select a saved post to edit it in the matching composer; use **New post** to
+start again. Notes need only text, bookmarks need a URL, and photos accept uploaded
+images or image URLs with alt text and an optional caption.
+
+Expand entries in the editor's **Action log** to inspect the actual request body,
+HTTP status, response body, and `Location` header. All four composers create
+`h-entry` objects: `name` makes an article, `bookmark-of` a bookmark, and `photo`
+a photo post; a note needs only `content`. Updates send `action: update` with
+`replace` properties. Uploading a file sends multipart data to `/micropub/media`,
+then its returned URL is used in the post. The log labels `/api/posts` requests as
+publisher-specific APIs rather than Micropub. Logs are held only in page memory,
+omit session credentials and binary file contents, and clear on reload.
+
 ## Run locally
 
 ```sh

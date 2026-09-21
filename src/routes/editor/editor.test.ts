@@ -20,7 +20,14 @@ test.each([
   async ({ content, original }) => {
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() });
     vi.stubGlobal('Buffer', undefined);
-    const jsonResponse = (data: unknown) => ({ ok: true, json: async () => data });
+    const jsonResponse = (data: unknown) => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => data,
+      clone: () => ({ text: async () => JSON.stringify(data) })
+    });
     vi.stubGlobal('fetch', async (input: string) => {
       if (input === '/api/posts') {
         return jsonResponse([
@@ -42,7 +49,9 @@ test.each([
           published: true,
           date: '2026-03-20T18:25:36.789Z',
           categories: ['ruby', 'web'],
-          ...(original ? { micropub: { properties: { content: [original] } } } : {})
+          ...(original
+            ? { micropub: { properties: { name: ['Existing post'], content: [original] } } }
+            : {})
         }
       });
     });
@@ -262,3 +271,245 @@ test.each(['loaded', 'updated', 'autosaved', 'failed', 'editing during update'])
     );
   }
 );
+
+function button(label: string) {
+  return [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+    (button) => button.textContent?.trim() === label
+  )!;
+}
+function fill(selector: string, value: string) {
+  const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!;
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  flushSync();
+}
+function startEditor() {
+  editor = mount(Editor, {
+    target: document.body,
+    props: { data: { isAuthenticated: true, siteUrl: 'https://blog.example', user: null } }
+  });
+  flushSync();
+}
+function memoryStorage() {
+  const storage = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key)
+  });
+  return storage;
+}
+
+test.each(['Article', 'Note', 'Bookmark', 'Photo'])(
+  'creates and updates a %s using its Micropub properties and logs the exchange',
+  async (type) => {
+    memoryStorage();
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (url === '/api/posts') return Response.json([]);
+      expect(url).toBe('/micropub');
+      requests.push(JSON.parse(init!.body as string));
+      return new Response(
+        null,
+        requests.length === 1
+          ? { status: 201, headers: { Location: 'https://blog.example/blog/new-post' } }
+          : { status: 204 }
+      );
+    });
+    startEditor();
+    button(type).click();
+    flushSync();
+    const expected: Record<string, unknown> = {
+      published: ['2026-09-20T12:00:00.000Z'],
+      'post-status': ['draft']
+    };
+    fill(
+      '#published-at',
+      new Date(new Date('2026-09-20T12:00:00Z').getTime() - new Date().getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, -1)
+    );
+    if (type === 'Article') {
+      fill('#title', 'My article');
+      fill('#content', 'A longer story');
+      Object.assign(expected, {
+        name: ['My article'],
+        content: ['A longer story'],
+        slug: ['my-article']
+      });
+    } else if (type === 'Note') {
+      expect(document.querySelector('#title')).toBeNull();
+      fill('#content', 'A short thought');
+      expected.content = ['A short thought'];
+    } else if (type === 'Bookmark') {
+      fill('#bookmark', 'https://example.com/read');
+      expected['bookmark-of'] = ['https://example.com/read'];
+    } else {
+      expect(button('Create Post').disabled).toBe(true);
+      button('Add image URL').click();
+      flushSync();
+      fill('#photo-0', 'https://example.com/photo.jpg');
+      fill('#alt-0', 'A mountain at sunrise');
+      expected.photo = [{ value: 'https://example.com/photo.jpg', alt: 'A mountain at sunrise' }];
+    }
+    expect(document.querySelector('form')!.checkValidity()).toBe(true);
+    button('Create Post').click();
+    await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
+    expect(requests[0]).toEqual({ type: ['h-entry'], properties: expected });
+    const log = document.querySelector('[aria-label="Action log"]')!;
+    expect(log.textContent).toContain('HTTP 201');
+    expect(log.textContent).toContain('location: https://blog.example/blog/new-post');
+    expect(log.textContent).toContain(JSON.stringify(requests[0], null, 2));
+    fill('#content', 'Updated commentary');
+    button('Update Post').click();
+    await vi.waitFor(() => expect(log.textContent).toContain('HTTP 204'));
+    expect(requests[1]).toMatchObject({
+      action: 'update',
+      url: 'https://blog.example/blog/new-post',
+      replace: {
+        content: ['Updated commentary'],
+        ...(expected.photo ? { photo: expected.photo } : {}),
+        ...(expected['bookmark-of'] ? { 'bookmark-of': expected['bookmark-of'] } : {})
+      }
+    });
+    button('New post').click();
+    flushSync();
+    expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe('');
+    expect(button('Create Post')).toBeDefined();
+  }
+);
+
+test('keeps separate composers through type navigation and a reload', async () => {
+  memoryStorage();
+  vi.stubGlobal('fetch', async () => Response.json([]));
+  startEditor();
+  fill('#title', 'An unfinished article');
+  fill('#content', 'Article body');
+  button('Note').click();
+  flushSync();
+  fill('#content', 'A draft note');
+  button('Bookmark').click();
+  flushSync();
+  fill('#bookmark', 'https://example.com/saved');
+  button('Photo').click();
+  flushSync();
+  button('Add image URL').click();
+  flushSync();
+  fill('#photo-0', 'https://example.com/photo.jpg');
+  fill('#alt-0', 'A saved description');
+  button('Article').click();
+  flushSync();
+  expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('An unfinished article');
+  await unmount(editor);
+  document.body.replaceChildren();
+  startEditor();
+  button('Note').click();
+  flushSync();
+  expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe('A draft note');
+  button('Bookmark').click();
+  flushSync();
+  expect(document.querySelector<HTMLInputElement>('#bookmark')?.value).toBe(
+    'https://example.com/saved'
+  );
+  button('Photo').click();
+  flushSync();
+  expect(document.querySelector<HTMLInputElement>('#alt-0')?.value).toBe('A saved description');
+});
+
+test.each(['note', 'bookmark', 'photo'])(
+  'loads the %s composer without generated content or a fabricated title',
+  async (type) => {
+    memoryStorage();
+    const properties =
+      type === 'bookmark'
+        ? { 'bookmark-of': ['https://example.com/read'] }
+        : type === 'photo'
+          ? {
+              photo: [
+                { value: 'https://example.com/photo.jpg', alt: 'Original alt' },
+                'https://example.com/second.jpg'
+              ]
+            }
+          : { content: ['Original note'] };
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (url === '/api/posts')
+        return Response.json([
+          { path: 'src/content/blog/2026-09-20-original.md', slug: 'original', date: '2026-09-20' }
+        ]);
+      if (url.startsWith('/api/posts/read?'))
+        return Response.json({
+          frontmatter: { title: 'Untitled Post', slug: 'original', micropub: { properties } },
+          content: 'Generated image or bookmark markup'
+        });
+      requests.push(JSON.parse(init!.body as string));
+      return new Response(null, { status: 204 });
+    });
+    startEditor();
+    await vi.waitFor(() =>
+      expect(document.querySelector('aside')?.textContent).toContain('original')
+    );
+    [...document.querySelectorAll<HTMLButtonElement>('aside button')]
+      .find((item) => item.textContent?.includes('original'))!
+      .click();
+    await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
+    expect(document.querySelector<HTMLInputElement>('#title')?.value ?? '').toBe('');
+    expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe(
+      type === 'note' ? 'Original note' : ''
+    );
+    button('Update Post').click();
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({
+      replace:
+        type === 'photo'
+          ? {
+              photo: [
+                { value: 'https://example.com/photo.jpg', alt: 'Original alt' },
+                { value: 'https://example.com/second.jpg', alt: '' }
+              ]
+            }
+          : properties
+    });
+  }
+);
+
+test('logs media upload metadata, HTTP failures, and network failures without losing the draft', async () => {
+  memoryStorage();
+  let attempt = 0;
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url === '/api/posts') return Response.json([]);
+    if (url === '/micropub/media') {
+      expect((init!.body as FormData).get('file')).toBeInstanceOf(File);
+      return new Response(null, {
+        status: 201,
+        headers: { Location: 'https://example.com/upload.jpg' }
+      });
+    }
+    if (++attempt === 1) return Response.json({ error: 'invalid_request' }, { status: 400 });
+    throw new TypeError('Connection lost');
+  });
+  startEditor();
+  button('Photo').click();
+  flushSync();
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  Object.defineProperty(input, 'files', {
+    value: [new File(['image'], 'sunrise.jpg', { type: 'image/jpeg' })]
+  });
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  await vi.waitFor(() =>
+    expect(document.querySelector<HTMLInputElement>('#photo-0')?.value).toBe(
+      'https://example.com/upload.jpg'
+    )
+  );
+  fill('#alt-0', 'Sunrise');
+  const log = document.querySelector('[aria-label="Action log"]')!;
+  expect(log.textContent).toContain('sunrise.jpg (image/jpeg, 5 bytes; binary omitted)');
+  button('Create Post').click();
+  await vi.waitFor(() => expect(log.textContent).toContain('HTTP 400'));
+  button('Create Post').click();
+  await vi.waitFor(() => expect(log.textContent).toContain('Connection lost'));
+  expect(document.querySelector<HTMLInputElement>('#alt-0')?.value).toBe('Sunrise');
+  button('Clear log').click();
+  flushSync();
+  expect(log.querySelectorAll('details')).toHaveLength(0);
+});

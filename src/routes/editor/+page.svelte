@@ -8,11 +8,18 @@
   import { browser } from '$app/environment';
   import BlogPostList from '$lib/components/BlogPostList.svelte';
 
+  import ActionLog, { type Action } from '$lib/components/ActionLog.svelte';
+  import { postTypes, inferPostType, type PostType, type Photo } from '$lib/editor/posts';
+
   let { data }: { data: PageData } = $props();
 
   const STORAGE_KEY = 'blog-editor-draft';
 
   interface EditorDraft {
+    postType?: PostType;
+    bookmark?: string;
+    photos?: Photo[];
+    drafts?: Partial<Record<PostType, EditorDraft>>;
     title: string;
     content: string;
     slug: string;
@@ -30,6 +37,60 @@
     return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, -1);
   }
 
+  let postType = $state<PostType>('article');
+  let bookmark = $state('');
+  let photos = $state<Photo[]>([]);
+  let drafts: Partial<Record<PostType, EditorDraft>> = {};
+  let actions = $state<Action[]>([]);
+  let nextAction = 0;
+
+  async function loggedFetch(url: string, init?: RequestInit): Promise<Response> {
+    const id = ++nextAction;
+    const method = init?.method ?? 'GET';
+    let request = `${method} ${url}`;
+    if (typeof init?.body === 'string') {
+      request += `\nContent-Type: application/json\n\n${JSON.stringify(JSON.parse(init.body), null, 2)}`;
+    } else if (init?.body instanceof FormData) {
+      request += '\nContent-Type: multipart/form-data (browser-generated boundary)\n\n';
+      request += [...init.body]
+        .map(
+          ([key, value]) =>
+            `${key}: ${typeof value === 'string' ? value : `${value.name} (${value.type}, ${value.size} bytes; binary omitted)`}`
+        )
+        .join('\n');
+    }
+    const explanation = url.startsWith('/api/')
+      ? 'Publisher repository API, not part of Micropub.'
+      : url === '/micropub/media'
+        ? 'The media endpoint stores a file and returns its URL in Location. The post is saved separately.'
+        : 'Micropub uses h-entry for all four post types. Properties determine the kind of post. Creation returns 201 and Location; an update uses action: update and returns 204.';
+    actions.push({ id, time: new Date().toLocaleTimeString(), method, url, explanation, request });
+    const complete = (result: Partial<Action>) => {
+      actions = actions.map((action) => (action.id === id ? { ...action, ...result } : action));
+    };
+    try {
+      const response = await fetch(url, init);
+      const body = await response.clone().text();
+      const headers = ['content-type', 'location'].flatMap((key) => {
+        const value = response.headers.get(key);
+        return value ? [`${key}: ${value}`] : [];
+      });
+      complete({
+        status: response.status,
+        response: [
+          `HTTP ${response.status} ${response.statusText}`,
+          ...headers,
+          '',
+          body || '(empty body)'
+        ].join('\n')
+      });
+      return response;
+    } catch (err) {
+      complete({ error: err instanceof Error ? err.message : String(err) });
+      throw err;
+    }
+  }
+
   let title = $state('');
   let content = $state('');
   let slug = $state('');
@@ -41,7 +102,19 @@
   let currentPath = $state(''); // Empty string means new post, otherwise path to existing post
 
   function postState() {
-    return { title, content, slug, description, categories, published, publishedAt, currentPath };
+    return {
+      postType,
+      bookmark,
+      photos: $state.snapshot(photos),
+      title,
+      content,
+      slug,
+      description,
+      categories,
+      published,
+      publishedAt,
+      currentPath
+    };
   }
 
   // Local draft backups are separate from the last loaded or submitted post.
@@ -70,6 +143,10 @@
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const draft: EditorDraft = JSON.parse(saved);
+        postType = draft.postType ?? 'article';
+        bookmark = draft.bookmark ?? '';
+        photos = draft.photos ?? [];
+        drafts = draft.drafts ?? {};
         title = draft.title;
         content = draft.content;
         slug = draft.slug;
@@ -107,6 +184,10 @@
 
     try {
       const draft: EditorDraft = {
+        postType,
+        bookmark,
+        photos: $state.snapshot(photos),
+        drafts,
         title,
         content,
         slug,
@@ -134,12 +215,55 @@
     if (saveTimeout) clearTimeout(saveTimeout);
 
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      delete drafts[postType];
+      if (Object.keys(drafts).length) {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ ...postState(), autoSlug, savedAt: new Date().toISOString(), drafts })
+        );
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+      }
       lastSaved = null;
       saveStatus = 'idle';
     } catch (err) {
       console.error('Failed to clear draft:', err);
     }
+  }
+
+  function switchType(type: PostType) {
+    if (currentPath || submitting || uploadingImage || type === postType) return;
+    drafts[postType] = { ...postState(), autoSlug, savedAt: new Date().toISOString() };
+    restoreComposer(type);
+    saveDraft();
+  }
+
+  function restoreComposer(type: PostType) {
+    const draft = drafts[type];
+    postType = type;
+    title = draft?.title ?? '';
+    content = draft?.content ?? '';
+    bookmark = draft?.bookmark ?? '';
+    photos = draft?.photos ?? [];
+    slug = draft?.slug ?? '';
+    description = draft?.description ?? '';
+    categories = draft?.categories ?? '';
+    published = draft?.published ?? false;
+    publishedAt = draft?.publishedAt ?? localDateTime(new Date());
+    autoSlug = draft?.autoSlug ?? true;
+    currentPath = '';
+    error = '';
+    success = '';
+    activeTab = 'edit';
+  }
+
+  function newPost() {
+    if (hasUnsavedChanges() && !confirm('Discard unsubmitted changes and start a new post?'))
+      return;
+    delete drafts[postType];
+    restoreComposer(postType);
+    savedPost = JSON.stringify(postState());
+    clearDraft();
   }
 
   function formatRelativeTime(date: Date): string {
@@ -174,7 +298,7 @@
 
     try {
       error = '';
-      const response = await fetch(`/api/posts/read?path=${encodeURIComponent(path)}`);
+      const response = await loggedFetch(`/api/posts/read?path=${encodeURIComponent(path)}`);
 
       if (!response.ok) {
         throw new Error('Failed to load post');
@@ -183,7 +307,13 @@
       const { frontmatter, content: postContent } = await response.json();
 
       // Populate form
-      title = frontmatter.title || '';
+      const source = frontmatter.micropub?.properties;
+      postType = source ? inferPostType(source) : 'article';
+      bookmark = source?.['bookmark-of']?.[0] ?? '';
+      photos = (source?.photo ?? []).map((photo: string | Photo) =>
+        typeof photo === 'string' ? { value: photo, alt: '' } : { ...photo }
+      );
+      title = source ? (source.name?.[0] ?? '') : frontmatter.title || '';
       slug = frontmatter.slug || '';
       description = frontmatter.description || '';
       published = frontmatter.published ?? false;
@@ -197,7 +327,7 @@
       content =
         typeof originalContent === 'string'
           ? originalContent
-          : (originalContent?.html ?? originalContent?.text ?? postContent);
+          : (originalContent?.html ?? originalContent?.text ?? (source ? '' : postContent));
       currentPath = path;
       autoSlug = false; // Don't auto-generate slug for existing posts
       savedPost = JSON.stringify(postState());
@@ -212,6 +342,7 @@
 
   // Handle selecting a post from the list
   async function handleSelectPost(path: string, isDraft: boolean) {
+    if (submitting || uploadingImage) return;
     // If selecting draft, just reload from localStorage (already loaded)
     if (isDraft) {
       return;
@@ -233,7 +364,19 @@
   // Auto-save when form fields change (debounced 1 second)
   $effect(() => {
     // Watch all form fields
-    const _ = [title, content, slug, description, categories, published, publishedAt, autoSlug];
+    const _ = [
+      postType,
+      bookmark,
+      photos,
+      title,
+      content,
+      slug,
+      description,
+      categories,
+      published,
+      publishedAt,
+      autoSlug
+    ];
 
     // Only back up changes that haven't been submitted.
     if (!hasUnsavedChanges()) return;
@@ -260,6 +403,16 @@
     e.preventDefault();
     error = '';
     success = '';
+    if (submitting || uploadingImage) return;
+    if ((postType === 'article' || postType === 'note') && !content.trim()) {
+      error = 'Write some content before saving.';
+      activeTab = 'edit';
+      return;
+    }
+    if (postType === 'photo' && !photos.length) {
+      error = 'Add a photo before saving.';
+      return;
+    }
     submitting = true;
     const submittedPost = postState();
 
@@ -274,15 +427,19 @@
             .replace(/\.md$/, '')}`
         : '';
       const properties = {
-        name: [title],
-        content: [content],
-        slug: [slug],
+        ...(postType === 'article' || postType === 'bookmark'
+          ? { name: title ? [title] : [] }
+          : {}),
+        content: content ? [content] : [],
+        slug: slug ? [slug] : [],
+        ...(postType === 'bookmark' ? { 'bookmark-of': [bookmark] } : {}),
+        ...(postType === 'photo' ? { photo: $state.snapshot(photos) } : {}),
         description: description ? [description] : [],
         category: categories ? categories.split(',').map((c) => c.trim()) : [],
         published: [postDate],
         'post-status': [published ? 'published' : 'draft']
       };
-      const response = await fetch('/micropub', {
+      const response = await loggedFetch('/micropub', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -290,7 +447,12 @@
         body: JSON.stringify(
           currentPath
             ? { action: 'update', url: postUrl, replace: properties }
-            : { type: ['h-entry'], properties }
+            : {
+                type: ['h-entry'],
+                properties: Object.fromEntries(
+                  Object.entries(properties).filter(([, values]) => values.length)
+                )
+              }
         )
       });
 
@@ -341,7 +503,7 @@
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('/micropub/media', {
+      const response = await loggedFetch('/micropub/media', {
         method: 'POST',
         body: formData
       });
@@ -350,8 +512,12 @@
         const imageUrl = response.headers.get('Location');
         if (imageUrl) {
           // Insert markdown image syntax at cursor or end
-          const imageMd = `![${file.name}](${imageUrl})`;
-          content = content ? `${content}\n\n${imageMd}` : imageMd;
+          if (postType === 'photo') {
+            photos.push({ value: imageUrl, alt: '' });
+          } else {
+            const imageMd = `![${file.name}](${imageUrl})`;
+            content = content ? `${content}\n\n${imageMd}` : imageMd;
+          }
         }
       } else {
         const errorText = await response.text();
@@ -393,15 +559,31 @@
   });
 </script>
 
+{#snippet imageUpload()}
+  <label
+    class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1 text-sm text-surface-700-300 hover:bg-surface-100-900"
+  >
+    <Upload class="h-4 w-4" />
+    {uploadingImage ? 'Uploading...' : 'Upload Image'}
+    <input
+      type="file"
+      accept="image/*"
+      onchange={handleImageUpload}
+      disabled={uploadingImage}
+      class="hidden"
+    />
+  </label>
+{/snippet}
+
 <svelte:head>
-  <title>Blog Editor - Martin Emde</title>
+  <title>Publisher - Martin Emde</title>
 </svelte:head>
 
 <div class="mx-auto max-w-7xl px-4 py-6">
   <!-- Header -->
   <div class="mb-6 flex items-center justify-between">
     <div class="flex items-center gap-3">
-      <h1 class="text-surface-900-50 text-2xl font-bold">Blog Editor</h1>
+      <h1 class="text-surface-900-50 text-2xl font-bold">Publisher</h1>
       {#if saveStatus === 'saving'}
         <span class="flex items-center gap-1.5 text-sm text-surface-600-400">
           <Save class="h-3.5 w-3.5 animate-pulse" />
@@ -452,12 +634,17 @@
       <aside
         class="h-[400px] overflow-hidden rounded-lg border border-surface-200-800 bg-surface-50-950 p-4 lg:h-[calc(100vh-12rem)]"
       >
-        <BlogPostList onSelectPost={handleSelectPost} {currentPath} hasDraft={lastSaved !== null} />
+        <BlogPostList
+          onSelectPost={handleSelectPost}
+          {currentPath}
+          hasDraft={lastSaved !== null}
+          request={loggedFetch}
+        />
       </aside>
     {/if}
 
     <!-- Right main content: Editor form -->
-    <main>
+    <main class="min-w-0">
       {#if error}
         <div class="text-error-900-50 mb-4 rounded-lg bg-error-50-950 p-4">
           {error}
@@ -470,118 +657,116 @@
         </div>
       {/if}
 
+      <nav aria-label="Post type" class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {#each postTypes as type (type.type)}
+          <button
+            type="button"
+            aria-pressed={postType === type.type}
+            disabled={!!currentPath || submitting || uploadingImage}
+            onclick={() => switchType(type.type)}
+            class="rounded-lg border p-3 text-left disabled:opacity-60 {postType === type.type
+              ? 'border-primary-500 bg-primary-50-950'
+              : 'border-surface-200-800'}"
+          >
+            <span class="font-semibold">{type.name}</span>
+          </button>
+        {/each}
+      </nav>
+      <div class="mb-6 flex items-center justify-between gap-4">
+        <p class="text-sm text-surface-600-400">
+          {postTypes.find((type) => type.type === postType)?.description}
+        </p>
+        <button
+          type="button"
+          onclick={newPost}
+          disabled={submitting || uploadingImage}
+          class="shrink-0 text-sm underline">New post</button
+        >
+      </div>
       <form onsubmit={handleSubmit} class="space-y-6">
-        <div>
-          <label for="title" class="mb-2 block text-sm font-medium text-surface-700-300">
-            Title <span class="text-error-500">*</span>
-          </label>
-          <input
-            type="text"
-            id="title"
-            bind:value={title}
-            required
-            class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
-          />
-        </div>
-
-        <div>
-          <label for="slug" class="mb-2 block text-sm font-medium text-surface-700-300">
-            Slug <span class="text-error-500">*</span>
-          </label>
-          <div class="flex items-center gap-2">
+        {#if postType === 'bookmark'}
+          <div>
+            <label for="bookmark" class="mb-2 block text-sm font-medium">Bookmark URL</label>
             <input
-              type="text"
-              id="slug"
-              bind:value={slug}
+              id="bookmark"
+              type="url"
               required
-              disabled={autoSlug}
-              class="flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none disabled:opacity-50"
+              pattern="https?://.*"
+              bind:value={bookmark}
+              placeholder="https://example.com/something-worth-keeping"
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-3"
             />
-            <label class="flex items-center gap-2 text-sm text-surface-700-300">
-              <input type="checkbox" bind:checked={autoSlug} class="rounded" />
-              Auto-generate
-            </label>
           </div>
-        </div>
-
-        <div>
-          <label for="description" class="mb-2 block text-sm font-medium text-surface-700-300">
-            Description
-          </label>
-          <input
-            type="text"
-            id="description"
-            bind:value={description}
-            placeholder="Short preview description"
-            class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
-          />
-        </div>
-
-        <div>
-          <label for="categories" class="mb-2 block text-sm font-medium text-surface-700-300">
-            Categories
-          </label>
-          <input
-            type="text"
-            id="categories"
-            bind:value={categories}
-            placeholder="Comma-separated (e.g., ruby, rails, web)"
-            class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
-          />
-        </div>
-
-        <div>
-          <label for="published-at" class="mb-2 block text-sm font-medium text-surface-700-300">
-            Publication date and time (local time)
-          </label>
-          <div class="flex items-center gap-2">
-            <input
-              type="datetime-local"
-              id="published-at"
-              bind:value={publishedAt}
-              required
-              step="any"
-              class="min-w-0 flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
-            />
+        {/if}
+        {#if postType === 'photo'}
+          <section
+            aria-label="Photos"
+            class="space-y-4 rounded-lg border border-surface-200-800 p-4"
+          >
+            <div class="flex items-center justify-between gap-4">
+              <h2 class="font-semibold">Photos</h2>
+              {@render imageUpload()}
+            </div>
+            <p class="text-sm text-surface-600-400">
+              Upload an image, or add an image URL. Alt text describes the image for people who
+              cannot see it.
+            </p>
+            {#each photos as photo, i (photo)}
+              <div class="space-y-2">
+                <label for={`photo-${i}`} class="block text-sm">Image URL {i + 1}</label>
+                <input
+                  id={`photo-${i}`}
+                  type="url"
+                  required
+                  pattern="https?://.*"
+                  bind:value={photo.value}
+                  class="w-full rounded border border-surface-200-800 bg-surface-50-950 p-2"
+                />
+                <label for={`alt-${i}`} class="block text-sm">Alt text {i + 1}</label>
+                <input
+                  id={`alt-${i}`}
+                  bind:value={photo.alt}
+                  class="w-full rounded border border-surface-200-800 bg-surface-50-950 p-2"
+                />
+                <button type="button" onclick={() => photos.splice(i, 1)} class="text-sm underline"
+                  >Remove image {i + 1}</button
+                >
+              </div>
+            {/each}
             <button
               type="button"
-              onclick={() => (publishedAt = localDateTime(new Date()))}
-              class="rounded-lg border border-surface-200-800 px-4 py-2 text-sm text-surface-700-300 hover:bg-surface-100-900"
+              onclick={() => photos.push({ value: '', alt: '' })}
+              class="text-sm underline">Add image URL</button
             >
-              Now
-            </button>
-          </div>
-        </div>
-
-        <div>
-          <label class="flex items-center gap-2 text-sm font-medium text-surface-700-300">
+          </section>
+        {/if}
+        {#if postType === 'article' || postType === 'bookmark'}
+          <div>
+            <label for="title" class="mb-2 block text-sm font-medium text-surface-700-300">
+              {postType === 'article' ? 'Title *' : 'Link title (optional)'}
+            </label>
             <input
-              type="checkbox"
-              bind:checked={published}
-              class="rounded border-surface-200-800 text-primary-500 focus:ring-2 focus:ring-primary-500"
+              type="text"
+              id="title"
+              bind:value={title}
+              required={postType === 'article'}
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
             />
-            Published (uncheck to save as draft)
-          </label>
-        </div>
+          </div>
+        {/if}
 
         <div>
           <div class="mb-2 flex items-center justify-between">
             <label for="content" class="text-sm font-medium text-surface-700-300">
-              Content (Markdown) <span class="text-error-500">*</span>
+              {postType === 'note'
+                ? 'What’s on your mind? *'
+                : postType === 'bookmark'
+                  ? 'Why save this? (optional)'
+                  : postType === 'photo'
+                    ? 'Caption (optional)'
+                    : 'Content (Markdown) *'}
             </label>
-            <label
-              class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1 text-sm text-surface-700-300 hover:bg-surface-100-900"
-            >
-              <Upload class="h-4 w-4" />
-              {uploadingImage ? 'Uploading...' : 'Upload Image'}
-              <input
-                type="file"
-                accept="image/*"
-                onchange={handleImageUpload}
-                disabled={uploadingImage}
-                class="hidden"
-              />
-            </label>
+            {#if postType !== 'photo'}{@render imageUpload()}{/if}
           </div>
 
           <!-- Tabs -->
@@ -611,8 +796,8 @@
             <textarea
               id="content"
               bind:value={content}
-              required
-              rows="20"
+              required={postType === 'article' || postType === 'note'}
+              rows={postType === 'article' ? 20 : 6}
               class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 font-mono text-sm text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
             ></textarea>
           {/if}
@@ -622,10 +807,111 @@
             <div
               class="prose prose-sm min-h-125 w-full rounded-lg border border-surface-200-800 bg-surface-50-950 p-4 dark:prose-invert"
             >
+              {#if title && (postType === 'article' || postType === 'bookmark')}
+                <h2>{title}</h2>
+              {/if}
+              {#if postType === 'bookmark' && /^https?:\/\//.test(bookmark)}
+                <!-- External bookmark URL, not a SvelteKit route. -->
+                <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+                <a href={bookmark} target="_blank" rel="noreferrer">{bookmark}</a>
+              {/if}
+              {#if postType === 'photo'}
+                {#each photos as photo (photo)}
+                  {#if /^https?:\/\//.test(photo.value)}
+                    <img
+                      src={photo.value}
+                      alt={photo.alt}
+                      class="max-h-96 rounded object-contain"
+                    />
+                  {/if}
+                {/each}
+              {/if}
               <!-- eslint-disable-next-line svelte/no-at-html-tags -->
               {@html previewHtml}
             </div>
           {/if}
+        </div>
+
+        <details open={postType === 'article'} class="space-y-4">
+          <summary class="cursor-pointer text-sm font-medium">Post details</summary>
+          <div>
+            <label for="slug" class="mb-2 block text-sm font-medium text-surface-700-300">
+              Slug (optional)
+            </label>
+            <div class="flex items-center gap-2">
+              <input
+                type="text"
+                id="slug"
+                bind:value={slug}
+                disabled={autoSlug}
+                class="flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none disabled:opacity-50"
+              />
+              <label class="flex items-center gap-2 text-sm text-surface-700-300">
+                <input type="checkbox" bind:checked={autoSlug} class="rounded" />
+                Auto-generate
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <label for="description" class="mb-2 block text-sm font-medium text-surface-700-300">
+              Description
+            </label>
+            <input
+              type="text"
+              id="description"
+              bind:value={description}
+              placeholder="Short preview description"
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label for="categories" class="mb-2 block text-sm font-medium text-surface-700-300">
+              Categories
+            </label>
+            <input
+              type="text"
+              id="categories"
+              bind:value={categories}
+              placeholder="Comma-separated (e.g., ruby, rails, web)"
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label for="published-at" class="mb-2 block text-sm font-medium text-surface-700-300">
+              Publication date and time (local time)
+            </label>
+            <div class="flex items-center gap-2">
+              <input
+                type="datetime-local"
+                id="published-at"
+                bind:value={publishedAt}
+                required
+                step="any"
+                class="min-w-0 flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
+              />
+              <button
+                type="button"
+                onclick={() => (publishedAt = localDateTime(new Date()))}
+                class="rounded-lg border border-surface-200-800 px-4 py-2 text-sm text-surface-700-300 hover:bg-surface-100-900"
+              >
+                Now
+              </button>
+            </div>
+          </div>
+        </details>
+
+        <div>
+          <label class="flex items-center gap-2 text-sm font-medium text-surface-700-300">
+            <input
+              type="checkbox"
+              bind:checked={published}
+              class="rounded border-surface-200-800 text-primary-500 focus:ring-2 focus:ring-primary-500"
+            />
+            Published (uncheck to save as draft)
+          </label>
         </div>
 
         <div class="flex justify-end gap-4">
@@ -637,7 +923,7 @@
           </a>
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || uploadingImage || (postType === 'photo' && !photos.length)}
             class="rounded-lg bg-primary-500 px-6 py-2 text-white hover:bg-primary-600 disabled:opacity-50"
           >
             {#if submitting}
@@ -648,6 +934,7 @@
           </button>
         </div>
       </form>
+      <ActionLog {actions} onClear={() => (actions = [])} />
     </main>
   </div>
 </div>

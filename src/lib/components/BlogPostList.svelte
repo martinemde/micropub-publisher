@@ -1,5 +1,6 @@
 <script lang="ts">
   import { FileText, FilePenLine } from 'lucide-svelte';
+  import { untrack } from 'svelte';
   import { browser } from '$app/environment';
 
   interface BlogPostFileInfo {
@@ -13,9 +14,10 @@
     onSelectPost: (path: string, isDraft: boolean) => void;
     currentPath?: string;
     hasDraft?: boolean;
+    request?: (url: string) => Promise<Response>;
   }
 
-  let { onSelectPost, currentPath = '', hasDraft = false }: Props = $props();
+  let { onSelectPost, currentPath = '', hasDraft = false, request = fetch }: Props = $props();
 
   let posts = $state<BlogPostFileInfo[]>([]);
   let loading = $state(true);
@@ -26,7 +28,7 @@
     try {
       loading = true;
       error = '';
-      const response = await fetch('/api/posts');
+      const response = await request('/api/posts');
 
       if (!response.ok) {
         throw new Error('Failed to load posts');
@@ -44,7 +46,7 @@
   // Load posts when component mounts
   $effect(() => {
     if (browser) {
-      loadPosts();
+      untrack(loadPosts);
     }
   });
 
