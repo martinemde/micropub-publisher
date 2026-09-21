@@ -23,7 +23,11 @@
     title: string;
     content: string;
     slug: string;
-    description: string;
+    summary?: string;
+    description?: string; // Older local drafts
+    featured?: string;
+    updatedAt?: string;
+    visibility?: string;
     categories: string;
     published: boolean;
     publishedAt?: string;
@@ -94,7 +98,10 @@
   let title = $state('');
   let content = $state('');
   let slug = $state('');
-  let description = $state('');
+  let summary = $state('');
+  let featured = $state('');
+  let updatedAt = $state('');
+  let visibility = $state('');
   let categories = $state('');
   let published = $state(false);
   let publishedAt = $state(localDateTime(new Date()));
@@ -109,7 +116,10 @@
       title,
       content,
       slug,
-      description,
+      summary,
+      featured,
+      updatedAt,
+      visibility,
       categories,
       published,
       publishedAt,
@@ -150,7 +160,10 @@
         title = draft.title;
         content = draft.content;
         slug = draft.slug;
-        description = draft.description;
+        summary = draft.summary ?? draft.description ?? '';
+        featured = draft.featured ?? '';
+        updatedAt = draft.updatedAt ?? '';
+        visibility = draft.visibility ?? '';
         categories = draft.categories;
         published = draft.published ?? false;
         publishedAt = draft.publishedAt ?? localDateTime(new Date());
@@ -191,7 +204,10 @@
         title,
         content,
         slug,
-        description,
+        summary,
+        featured,
+        updatedAt,
+        visibility,
         categories,
         published,
         publishedAt,
@@ -246,7 +262,10 @@
     bookmark = draft?.bookmark ?? '';
     photos = draft?.photos ?? [];
     slug = draft?.slug ?? '';
-    description = draft?.description ?? '';
+    summary = draft?.summary ?? draft?.description ?? '';
+    featured = draft?.featured ?? '';
+    updatedAt = draft?.updatedAt ?? '';
+    visibility = draft?.visibility ?? '';
     categories = draft?.categories ?? '';
     published = draft?.published ?? false;
     publishedAt = draft?.publishedAt ?? localDateTime(new Date());
@@ -308,14 +327,21 @@
 
       // Populate form
       const source = frontmatter.micropub?.properties;
-      postType = source ? inferPostType(source) : 'article';
+      postType = inferPostType(
+        source ?? { ...frontmatter, name: frontmatter.name ?? frontmatter.title },
+        postContent
+      );
       bookmark = source?.['bookmark-of']?.[0] ?? '';
       photos = (source?.photo ?? []).map((photo: string | Photo) =>
         typeof photo === 'string' ? { value: photo, alt: '' } : { ...photo }
       );
       title = source ? (source.name?.[0] ?? '') : frontmatter.title || '';
       slug = frontmatter.slug || '';
-      description = frontmatter.description || '';
+      summary = source?.summary?.[0] ?? frontmatter.description ?? '';
+      featured = source?.featured?.[0] ?? frontmatter.image ?? '';
+      const originalUpdated = source?.updated?.[0] ?? frontmatter.updated;
+      updatedAt = originalUpdated ? localDateTime(new Date(originalUpdated)) : '';
+      visibility = source?.visibility?.[0] ?? frontmatter.visibility ?? '';
       published = frontmatter.published ?? false;
       const filenameDate = path
         .split('/')
@@ -371,7 +397,10 @@
       title,
       content,
       slug,
-      description,
+      summary,
+      featured,
+      updatedAt,
+      visibility,
       categories,
       published,
       publishedAt,
@@ -434,7 +463,12 @@
         slug: slug ? [slug] : [],
         ...(postType === 'bookmark' ? { 'bookmark-of': [bookmark] } : {}),
         ...(postType === 'photo' ? { photo: $state.snapshot(photos) } : {}),
-        description: description ? [description] : [],
+        summary: summary ? [summary] : [],
+        featured: featured ? [featured] : [],
+        updated: updatedAt ? [new Date(updatedAt).toISOString()] : [],
+        visibility: visibility ? [visibility] : [],
+        // Remove the old property when migrating an existing post to summary.
+        ...(currentPath ? { description: [] } : {}),
         category: categories ? categories.split(',').map((c) => c.trim()) : [],
         published: [postDate],
         'post-status': [published ? 'published' : 'draft']
@@ -854,16 +888,78 @@
           </div>
 
           <div>
-            <label for="description" class="mb-2 block text-sm font-medium text-surface-700-300">
-              Description
+            <label for="summary" class="mb-2 block text-sm font-medium text-surface-700-300">
+              Summary
             </label>
             <input
               type="text"
-              id="description"
-              bind:value={description}
-              placeholder="Short preview description"
+              id="summary"
+              bind:value={summary}
+              placeholder="Short summary for previews"
               class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
             />
+          </div>
+
+          <div>
+            <label for="featured" class="mb-2 block text-sm font-medium text-surface-700-300"
+              >Featured image URL</label
+            >
+            <input
+              id="featured"
+              type="url"
+              pattern="https?://.*"
+              bind:value={featured}
+              placeholder="https://example.com/cover.jpg"
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2"
+            />
+            <p class="mt-1 text-sm text-surface-600-400">
+              A cover image for the post, separate from photos in its content.
+            </p>
+          </div>
+          <div>
+            <label for="updated-at" class="mb-2 block text-sm font-medium text-surface-700-300"
+              >Updated date and time (optional, local time)</label
+            >
+            <div class="flex items-center gap-2">
+              <input
+                id="updated-at"
+                type="datetime-local"
+                step="any"
+                bind:value={updatedAt}
+                class="min-w-0 flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2"
+              />
+              <button
+                type="button"
+                onclick={() => (updatedAt = localDateTime(new Date()))}
+                class="rounded-lg border border-surface-200-800 px-4 py-2 text-sm"
+                >Set updated to now</button
+              >
+              <button type="button" onclick={() => (updatedAt = '')} class="text-sm underline"
+                >Clear updated time</button
+              >
+            </div>
+          </div>
+          <div>
+            <label for="visibility" class="mb-2 block text-sm font-medium text-surface-700-300"
+              >Visibility</label
+            >
+            <select
+              id="visibility"
+              bind:value={visibility}
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2"
+            >
+              <option value="">Default (public)</option>
+              <option value="public">Public</option>
+              <option value="unlisted">Unlisted</option>
+              <option value="private">Private</option>
+              {#if visibility && !['public', 'unlisted', 'private'].includes(visibility)}
+                <option value={visibility}>{visibility} (existing value)</option>
+              {/if}
+            </select>
+            <p class="mt-1 text-sm text-surface-600-400">
+              The blog currently excludes unlisted and private posts from publication. This metadata
+              does not protect files in the repository.
+            </p>
           </div>
 
           <div>

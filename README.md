@@ -18,10 +18,21 @@ work. Select a saved post to edit it in the matching composer; use **New post** 
 start again. Notes need only text, bookmarks need a URL, and photos accept uploaded
 images or image URLs with alt text and an optional caption.
 
+**Post details** supports Micropub `summary`, `featured`, `updated`, and the
+`visibility` extension. Summary loads older descriptions; featured is a cover
+image URL separate from content photos. Updated time is optional and uses local
+time in the form and ISO timestamps in requests. Visibility can be omitted or set
+to public, unlisted, or private, independently of draft status. The blog currently
+excludes unlisted and private posts from publication; these values do not protect
+repository files. Clearing a field replaces its property with an empty array.
+Editing an older post migrates its description to summary.
+
 Expand entries in the editor's **Action log** to inspect the actual request body,
 HTTP status, response body, and `Location` header. All four composers create
-`h-entry` objects: `name` makes an article, `bookmark-of` a bookmark, and `photo`
-a photo post; a note needs only `content`. Updates send `action: update` with
+`h-entry` objects: `bookmark-of` identifies a bookmark and `photo` a photo post.
+Like the blog's `src/lib/utils/post-model.ts`, the editor recognizes an article
+when its nonempty name differs from the beginning of its nonempty content;
+otherwise it recognizes a note. Updates send `action: update` with
 `replace` properties. Uploading a file sends multipart data to `/micropub/media`,
 then its returned URL is used in the post. The log labels `/api/posts` requests as
 publisher-specific APIs rather than Micropub. Logs are held only in page memory,
