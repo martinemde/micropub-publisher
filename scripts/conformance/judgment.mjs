@@ -78,7 +78,11 @@ export function createJudge(appDir, fixtureDir) {
         ? originalContent
         : (originalContent?.html ?? originalContent?.text);
     assert(
-      content.trim().startsWith(text?.trim() ?? ''),
+      // Photos render above the caption, so the text follows any leading images.
+      content
+        .trim()
+        .replace(/^(<img\b[^>]*>\s*)+/, '')
+        .startsWith(text?.trim() ?? ''),
       'Published content must retain submitted text/HTML'
     );
     const dom = new JSDOM(content);
