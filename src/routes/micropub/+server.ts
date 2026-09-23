@@ -6,12 +6,19 @@ import {
   generateFilePath,
   generateCommitMessage,
   readProperties,
-  invalid
+  invalid,
+  siteDateParts
 } from '$lib/server/micropub';
 import { createStorageBackend } from '$lib/server/storage/factory';
 import { requireMicropubToken } from '$lib/server/micropub-auth';
 import { requireEnvironmentVariable } from '$lib/server/env';
-import { findPost, mutatePost, postSlug } from '$lib/server/micropub-posts';
+import {
+  archivePath,
+  findPost,
+  mutatePost,
+  postLocation,
+  postUrl
+} from '$lib/server/micropub-posts';
 import { uploadPhoto, validatePhoto } from '$lib/server/micropub-media';
 import type { RequestHandler } from './$types';
 
@@ -126,7 +133,7 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       const action = micropubRequest.action;
       if (typeof action !== 'string' || !['update', 'delete', 'undelete'].includes(action))
         invalid('Invalid action');
-      postSlug(micropubRequest.url);
+      postLocation(micropubRequest.url);
       if (action === 'update' && !contentType.includes('application/json'))
         invalid('Updates require JSON');
       requireMicropubToken(request, locals, url, bodyToken, action);
@@ -157,12 +164,13 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       // Parse Micropub request to blog post data
       const post = parseMicropubRequest(micropubRequest);
 
-      const usedSlugs = new Set((await backend.listBlogPosts()).map((file) => file.slug));
+      // Slugs only need to be unique within their day.
+      const { day } = siteDateParts(post.date);
+      const usedSlugs = new Set(
+        (await backend.listBlogPosts()).filter((file) => file.date === day).map((file) => file.slug)
+      );
       const requestedSlug = post.slug;
-      while (
-        usedSlugs.has(post.slug) ||
-        (await backend.fileExists(`.micropub/deleted/${post.slug}.json`))
-      ) {
+      while (usedSlugs.has(post.slug) || (await backend.fileExists(archivePath(day, post.slug)))) {
         post.slug = `${requestedSlug}-${crypto.randomUUID()}`;
       }
       if (post.properties['mp-slug']) post.properties['mp-slug'] = [post.slug];
@@ -180,12 +188,10 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       await backend.createOrUpdateFile(filePath, content, commitMessage);
 
       // Return 201 Created with Location header
-      const siteUrl = requireEnvironmentVariable('PUBLIC_SITE_URL', env.PUBLIC_SITE_URL);
-      const postUrl = `${siteUrl}/blog/${post.slug}`;
       return new Response(null, {
         status: 201,
         headers: {
-          Location: postUrl,
+          Location: postUrl(post),
           'Content-Type': 'application/json'
         }
       });

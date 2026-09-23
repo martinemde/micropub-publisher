@@ -7,27 +7,40 @@ import {
   readProperties,
   parseMicropubRequest,
   generateMarkdownFile,
+  siteDateParts,
+  type BlogPost,
   type MicropubProperties
 } from './micropub';
 import type { StorageBackend } from './storage/types';
 
-export function postSlug(target: unknown): string {
-  const base = `${requireEnvironmentVariable('PUBLIC_SITE_URL', env.PUBLIC_SITE_URL)}/blog/`;
-  if (
-    typeof target !== 'string' ||
-    !target.startsWith(base) ||
-    !/^[a-zA-Z0-9_-]+$/.test(target.slice(base.length))
-  )
-    invalid('Invalid post URL');
-  return target.slice(base.length);
+const siteUrl = () => requireEnvironmentVariable('PUBLIC_SITE_URL', env.PUBLIC_SITE_URL);
+/** Permalinks are nested by the site's calendar day: /2026/07/21/134309 */
+export function postUrl(post: Pick<BlogPost, 'date' | 'slug'>): string {
+  return `${siteUrl()}/${siteDateParts(post.date).day.replaceAll('-', '/')}/${post.slug}`;
+}
+/** Parse a permalink, or a legacy /blog/slug URL that has no day. */
+export function postLocation(target: unknown): { day?: string; slug: string } {
+  const path =
+    typeof target === 'string' && target.startsWith(`${siteUrl()}/`)
+      ? target.slice(siteUrl().length)
+      : '';
+  const match =
+    path.match(/^\/(\d{4})\/(\d{2})\/(\d{2})\/([a-zA-Z0-9_-]+)$/) ??
+    path.match(/^\/blog\/()()()([a-zA-Z0-9_-]+)$/);
+  if (!match) invalid('Invalid post URL');
+  const [, year, month, day, slug] = match;
+  return year ? { day: `${year}-${month}-${day}`, slug } : { slug };
 }
 export async function findPost(backend: StorageBackend, target: unknown) {
-  const slug = postSlug(target);
-  const file = (await backend.listBlogPosts()).find((post) => post.slug === slug);
-  if (!file) error(404, { message: 'Post not found', error: 'invalid_request' });
-  return file;
+  const { day, slug } = postLocation(target);
+  const files = (await backend.listBlogPosts()).filter(
+    (post) => post.slug === slug && (!day || post.date === day)
+  );
+  if (!files.length) error(404, { message: 'Post not found', error: 'invalid_request' });
+  if (files.length > 1) invalid('Ambiguous post URL');
+  return files[0];
 }
-const archivePath = (slug: string) => `.micropub/deleted/${slug}.json`;
+export const archivePath = (day: string, slug: string) => `.micropub/deleted/${day}-${slug}.json`;
 function propertyMap(value: unknown): MicropubProperties {
   if (
     !value ||
@@ -55,25 +68,25 @@ function propertyMap(value: unknown): MicropubProperties {
   return map;
 }
 export async function mutatePost(backend: StorageBackend, request: Record<string, unknown>) {
-  const slug = postSlug(request.url);
-  const archive = archivePath(slug);
   if (request.action === 'undelete') {
-    if (!(await backend.fileExists(archive))) error(404, 'Deleted post not found');
+    const { day, slug } = postLocation(request.url);
+    const archive = day && archivePath(day, slug);
+    if (!archive || !(await backend.fileExists(archive))) error(404, 'Deleted post not found');
     const saved = JSON.parse(await backend.readFile(archive)) as { path: string; content: string };
-    if (!new RegExp(`^src/content/blog/\\d{4}-\\d{2}-\\d{2}-${slug}\\.md$`).test(saved.path))
-      invalid('Invalid archived path');
+    if (saved.path !== `src/content/blog/${day}-${slug}.md`) invalid('Invalid archived path');
     if (await backend.fileExists(saved.path)) error(409, 'Post already exists');
     await backend.createOrUpdateFile(saved.path, saved.content, `Undelete post: ${slug}`);
     await backend.deleteFile(archive, `Remove restored archive: ${slug}`);
     return;
   }
   const file = await findPost(backend, request.url);
+  const slug = file.slug;
   const source = await backend.readFile(file.path);
   if (request.action === 'delete') {
     // Write the recovery copy first. If removing the live file fails, the
     // original still exists and retrying deletion is safe.
     await backend.createOrUpdateFile(
-      archive,
+      archivePath(file.date, slug),
       JSON.stringify({ path: file.path, content: source }),
       `Archive post: ${slug}`
     );
@@ -120,6 +133,6 @@ export async function mutatePost(backend: StorageBackend, request: Record<string
   await backend.createOrUpdateFile(
     file.path,
     generateMarkdownFile(post),
-    `Update post: ${post.title}`
+    `Update post: ${post.title || slug}`
   );
 }

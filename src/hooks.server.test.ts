@@ -290,13 +290,15 @@ describe('Micropub authorization and actions', () => {
 describe('Micropub transport through server hooks', () => {
   // micropub.rocks server cases 100, 800, and 801.
   it.each(['header', 'body'])('accepts a form post with a token in the %s', async (where) => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-07-21T20:43:09Z') });
     const body = new URLSearchParams({ h: 'entry', content: 'Hello from a client' });
     const headers: Record<string, string> = { Origin: client };
     if (where === 'header') headers.Authorization = `Bearer ${token}`;
     else body.set('access_token', token);
     const { response } = await request('/micropub', { method: 'POST', headers, body });
     expect(response.status).toBe(201);
-    expect(response.headers.get('Location')).toBe('https://example.com/blog/untitled-post');
+    // Untitled posts are named for their Pacific publish time.
+    expect(response.headers.get('Location')).toBe('https://example.com/2026/07/21/134309');
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
     expect(response.headers.get('Access-Control-Expose-Headers')).toBe('Location');
   });
@@ -577,6 +579,24 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     });
     expect(source).not.toContain(token);
   });
+  it('reuses a slug on another day and still finds posts by legacy /blog/ URLs', async () => {
+    const editor = storeAccessToken('fake', 'https://example.com/', 'update');
+    const post = (published: string) => ({
+      properties: { content: ['Same time'], 'mp-slug': ['daily'], published: [published] }
+    });
+    const first = await send(post('2026-07-21T20:43:09Z'), token);
+    expect(first.headers.get('Location')).toBe('https://example.com/2026/07/21/daily');
+    const legacy = { action: 'update', url: 'https://example.com/blog/daily' };
+    expect((await send({ ...legacy, replace: { content: ['Edited'] } }, editor)).status).toBe(204);
+    const second = await send(post('2026-07-22T20:43:09Z'), token);
+    expect(second.headers.get('Location')).toBe('https://example.com/2026/07/22/daily');
+    expect([...githubWrites.keys()].sort()).toEqual([
+      'src/content/blog/2026-07-21-daily.md',
+      'src/content/blog/2026-07-22-daily.md'
+    ]);
+    const ambiguous = await send({ ...legacy, replace: { content: ['Which?'] } }, editor);
+    expect(ambiguous.status).toBe(400);
+  });
   it('rejects invalid updates without modifying any files', async () => {
     const created = await send({ properties: { content: ['Keep me'] } }, token);
     const url = created.headers.get('Location');
@@ -605,6 +625,7 @@ describe('Publishing workflow extensions', () => {
         category: ['reading'],
         'bookmark-of': ['https://example.org/page?a=1&b=2'],
         'mp-slug': ['My Bookmark'],
+        published: ['2026-07-22T03:00:00Z'],
         'post-status': ['draft']
       };
       const body =
@@ -620,7 +641,7 @@ describe('Publishing workflow extensions', () => {
       };
       const { response } = await request('/micropub', { method: 'POST', headers, body });
       expect(response.status).toBe(201);
-      expect(response.headers.get('Location')).toBe('https://example.com/blog/my-bookmark');
+      expect(response.headers.get('Location')).toBe('https://example.com/2026/07/21/my-bookmark');
       const source = matter(Buffer.from([...githubWrites.values()][0], 'base64').toString());
       expect(source.data.published).toBe(false);
       expect(source.data.micropub.properties).toEqual({ ...props, 'mp-slug': ['my-bookmark'] });

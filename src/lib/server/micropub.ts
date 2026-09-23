@@ -39,6 +39,29 @@ export function normalizeProperties(input: Record<string, unknown>): MicropubPro
       .map(([key, value]) => [key, Array.isArray(value) ? value : [value]])
   );
 }
+export const SITE_TIME_ZONE = 'America/Los_Angeles';
+/** The site's calendar day (YYYY-MM-DD) and clock time (HHMMSS) for a published date. */
+export function siteDateParts(date: string): { day: string; time: string } {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return { day: date, time: '000000' };
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: SITE_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    })
+      .formatToParts(new Date(date))
+      .map(({ type, value }) => [type, value])
+  );
+  return {
+    day: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}${parts.minute}${parts.second}`
+  };
+}
 const first = (properties: MicropubProperties, key: string, fallback = ''): string => {
   const value = properties[key]?.[0];
   return typeof value === 'string' ? value : fallback;
@@ -94,7 +117,9 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
   const postStatus = first(properties, 'post-status', 'published');
   if (!['published', 'draft'].includes(postStatus) || (properties['post-status']?.length ?? 0) > 1)
     invalid('Invalid post-status');
-  const title = first(properties, 'name', 'Untitled Post');
+  const title = first(properties, 'name');
+  const date = first(properties, 'published', new Date().toISOString());
+  if (!Number.isFinite(Date.parse(date))) invalid('Invalid published date');
   const suggestedSlug = first(properties, 'mp-slug');
   const rawSlug = suggestedSlug
     ? suggestedSlug
@@ -108,10 +133,9 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') ||
-    'post';
+    // Untitled posts are named for their publish time, e.g. /2026/07/21/134309.
+    siteDateParts(date).time;
   if (!/^[a-zA-Z0-9]+(?:[-_][a-zA-Z0-9]+)*$/.test(slug)) invalid('Invalid slug');
-  const date = first(properties, 'published', new Date().toISOString());
-  if (!Number.isFinite(Date.parse(date))) invalid('Invalid published date');
   const value = properties.content?.[0];
   let content = typeof value === 'string' ? value : '';
   if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -147,7 +171,7 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
 export function generateMarkdownFile(post: BlogPost): string {
   const data = Object.fromEntries(
     Object.entries({
-      title: post.title,
+      title: post.title || undefined,
       date: post.date,
       author: post.author,
       description: post.description,
@@ -177,8 +201,8 @@ export function readProperties(source: string): MicropubProperties {
   );
 }
 export function generateFilePath(post: BlogPost): string {
-  return `src/content/blog/${new Date(post.date).toISOString().slice(0, 10)}-${post.slug}.md`;
+  return `src/content/blog/${siteDateParts(post.date).day}-${post.slug}.md`;
 }
 export function generateCommitMessage(post: BlogPost, isUpdate = false): string {
-  return `${isUpdate ? 'Update' : 'Add'} post: ${post.title}`;
+  return `${isUpdate ? 'Update' : 'Add'} post: ${post.title || post.slug}`;
 }
