@@ -121,7 +121,7 @@ test.each(['unchanged', 'edited', 'now', 'new'])(
       requests.push(JSON.parse(init!.body as string));
       return new Response(null, {
         status: 201,
-        headers: { Location: 'https://blog.example/blog/first' }
+        headers: { Location: 'https://blog.example/2026/03/20/first' }
       });
     });
     editor = mount(Editor, {
@@ -316,7 +316,7 @@ test.each(['Article', 'Note', 'Bookmark', 'Photo'])(
       return new Response(
         null,
         requests.length === 1
-          ? { status: 201, headers: { Location: 'https://blog.example/blog/new-post' } }
+          ? { status: 201, headers: { Location: 'https://blog.example/2026/09/20/new-post' } }
           : { status: 204 }
       );
     });
@@ -370,7 +370,7 @@ test.each(['Article', 'Note', 'Bookmark', 'Photo'])(
     expect(requests[0]).toEqual({ type: ['h-entry'], properties: expected });
     const log = document.querySelector('[aria-label="Action log"]')!;
     expect(log.textContent).toContain('HTTP 201');
-    expect(log.textContent).toContain('location: https://blog.example/blog/new-post');
+    expect(log.textContent).toContain('location: https://blog.example/2026/09/20/new-post');
     expect(log.textContent).toContain(JSON.stringify(requests[0], null, 2));
     fill('#content', 'Updated commentary');
     fill('#summary', '');
@@ -381,7 +381,7 @@ test.each(['Article', 'Note', 'Bookmark', 'Photo'])(
     await vi.waitFor(() => expect(log.textContent).toContain('HTTP 204'));
     expect(requests[1]).toMatchObject({
       action: 'update',
-      url: 'https://blog.example/blog/new-post',
+      url: 'https://blog.example/2026/09/20/new-post',
       replace: {
         content: ['Updated commentary'],
         summary: [],
@@ -662,4 +662,35 @@ test('restores an old local draft description as summary and sets updated time e
   expect(
     new Date(document.querySelector<HTMLInputElement>('#updated-at')!.value).toISOString()
   ).toBe('2026-09-22T10:00:01.123Z');
+});
+
+test('follows a post to its new permalink when an update moves it', async () => {
+  memoryStorage();
+  const requests: Record<string, unknown>[] = [];
+  const locations = [
+    'https://blog.example/2026/09/20/draft-name',
+    'https://blog.example/2026/09/20/final-name'
+  ];
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url === '/api/posts') return Response.json([]);
+    requests.push(JSON.parse(init!.body as string));
+    return requests.length <= 2
+      ? new Response(null, { status: 201, headers: { Location: locations[requests.length - 1] } })
+      : new Response(null, { status: 204 });
+  });
+  startEditor();
+  button('Article').click();
+  flushSync();
+  fill('#title', 'Draft name');
+  fill('#content', 'Body');
+  button('Create Post').click();
+  await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
+  fill('#slug', 'final-name');
+  button('Update Post').click();
+  await vi.waitFor(() => expect(requests).toHaveLength(2));
+  expect(requests[1]).toMatchObject({ action: 'update', url: locations[0] });
+  await vi.waitFor(() => expect(document.body.textContent).toContain(locations[1]));
+  button('Update Post').click();
+  await vi.waitFor(() => expect(requests).toHaveLength(3));
+  expect(requests[2]).toMatchObject({ action: 'update', url: locations[1] });
 });

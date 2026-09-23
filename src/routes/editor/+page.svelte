@@ -448,12 +448,12 @@
     try {
       const postDate = new Date(publishedAt).toISOString();
 
+      // src/content/blog/2026-07-21-slug.md is published at /2026/07/21/slug
       const postUrl = currentPath
-        ? `${data.siteUrl}/blog/${currentPath
+        ? `${data.siteUrl}/${currentPath
             .split('/')
             .pop()!
-            .replace(/^\d{4}-\d{2}-\d{2}-/, '')
-            .replace(/\.md$/, '')}`
+            .replace(/^(\d{4})-(\d{2})-(\d{2})-(.+)\.md$/, '$1/$2/$3/$4')}`
         : '';
       const properties = {
         ...(postType === 'article' || postType === 'bookmark'
@@ -495,14 +495,13 @@
         success = currentPath
           ? `Post updated successfully! View at: ${location}`
           : `Post created successfully! View at: ${location}`;
-        // Update currentPath if this was a new post
-        if (!currentPath) {
-          // Extract path from location or construct it
-          const datePrefix = postDate.slice(0, 10);
-          const createdSlug = new URL(location).pathname.split('/').pop()!;
+        // A create, or an update that moved the permalink, answers 201 with the new URL.
+        if (response.status === 201) {
+          // The Location permalink /2026/07/21/slug names the stored file.
+          const [year, month, day, createdSlug] = new URL(location).pathname.split('/').slice(-4);
           if (slug === submittedPost.slug) slug = createdSlug;
           autoSlug = false;
-          currentPath = `src/content/blog/${datePrefix}-${createdSlug}.md`;
+          currentPath = `src/content/blog/${year}-${month}-${day}-${createdSlug}.md`;
           submittedPost.slug = createdSlug;
           submittedPost.currentPath = currentPath;
         }

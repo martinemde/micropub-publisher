@@ -13,13 +13,14 @@ vi.mock('$lib/server/storage/factory', () => ({
   }))
 }));
 
-vi.mock('$lib/server/micropub', () => ({
+vi.mock('$lib/server/micropub', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/micropub')>()),
   parseMicropubRequest: vi.fn((req) => ({
     title: req.name || req.properties?.name?.[0] || 'Test Post',
     content: req.content || req.properties?.content?.[0] || 'Test content',
     slug: req.slug || req.properties?.slug?.[0] || 'test-post',
     published: true,
-    date: new Date(),
+    date: '2025-01-01T20:00:00Z',
     author: 'Test Author',
     properties: {}
   })),
@@ -272,7 +273,7 @@ describe('Micropub POST Endpoint', () => {
 
       const response = await POST(event);
       expect(response.status).toBe(201);
-      expect(response.headers.get('Location')).toBe('https://example.com/blog/test-post');
+      expect(response.headers.get('Location')).toBe('https://example.com/2025/01/01/test-post');
     });
 
     it('should accept application/x-www-form-urlencoded', async () => {
@@ -326,7 +327,7 @@ describe('Micropub POST Endpoint', () => {
       const response = await POST(event);
 
       expect(response.status).toBe(201);
-      expect(response.headers.get('Location')).toBe('https://example.com/blog/test-slug');
+      expect(response.headers.get('Location')).toBe('https://example.com/2025/01/01/test-slug');
       expect(response.headers.get('Content-Type')).toBe('application/json');
     });
   });
