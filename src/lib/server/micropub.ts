@@ -120,7 +120,8 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
       typeof rich.html === 'string' ? rich.html : typeof rich.text === 'string' ? rich.text : '';
   }
   const photos = (properties.photo ?? []).map(photoMarkup);
-  if (photos.length) content += `\n\n${photos.join('\n\n')}`;
+  // Photos lead the post, above any caption text.
+  if (photos.length) content = [...photos, content].filter(Boolean).join('\n\n');
   for (const bookmark of properties['bookmark-of'] ?? []) {
     let url: URL;
     try {
