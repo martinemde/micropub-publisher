@@ -183,6 +183,10 @@ export function generateMarkdownFile(post: BlogPost): string {
   );
   return matter.stringify(post.content + '\n', data);
 }
+// Unquoted YAML dates like `date: 2025-12-19` parse as UTC midnight. Keep them
+// date-only so they stay on their own day instead of the Pacific day before.
+const yamlDate = (date: Date) =>
+  date.getTime() % 86_400_000 === 0 ? date.toISOString().slice(0, 10) : date.toISOString();
 export function readProperties(source: string): MicropubProperties {
   const { data, content } = matter(source);
   if (data.micropub?.properties) return normalizeProperties(data.micropub.properties);
@@ -193,7 +197,7 @@ export function readProperties(source: string): MicropubProperties {
         content,
         category: data.categories,
         slug: data.slug,
-        published: data.date instanceof Date ? data.date.toISOString() : data.date,
+        published: data.date instanceof Date ? yamlDate(data.date) : data.date,
         description: data.description,
         'post-status': data.published ? 'published' : 'draft'
       }).filter(([, value]) => value !== undefined)

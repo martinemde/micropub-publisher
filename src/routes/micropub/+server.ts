@@ -137,8 +137,13 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       if (action === 'update' && !contentType.includes('application/json'))
         invalid('Updates require JSON');
       requireMicropubToken(request, locals, url, bodyToken, action);
-      await serializeWrite(() => mutatePost(createStorageBackend(githubToken), micropubRequest));
-      return new Response(null, { status: 204 });
+      const moved = await serializeWrite(() =>
+        mutatePost(createStorageBackend(githubToken), micropubRequest)
+      );
+      // Micropub answers a URL-changing update with 201 and the new Location.
+      return moved
+        ? new Response(null, { status: 201, headers: { Location: moved } })
+        : new Response(null, { status: 204 });
     }
     requireMicropubToken(request, locals, url, bodyToken, 'create');
 

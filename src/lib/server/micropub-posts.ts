@@ -6,6 +6,7 @@ import {
   invalid,
   readProperties,
   parseMicropubRequest,
+  generateFilePath,
   generateMarkdownFile,
   siteDateParts,
   type BlogPost,
@@ -67,7 +68,11 @@ function propertyMap(value: unknown): MicropubProperties {
   }
   return map;
 }
-export async function mutatePost(backend: StorageBackend, request: Record<string, unknown>) {
+/** Applies a Micropub action. Returns the new URL when an update moves the post. */
+export async function mutatePost(
+  backend: StorageBackend,
+  request: Record<string, unknown>
+): Promise<string | undefined> {
   if (request.action === 'undelete') {
     const { day, slug } = postLocation(request.url);
     const archive = day && archivePath(day, slug);
@@ -127,12 +132,25 @@ export async function mutatePost(backend: StorageBackend, request: Record<string
     }
   }
   const post = parseMicropubRequest({ properties });
-  // Updating properties does not relocate an existing permalink or file.
-  post.slug = slug;
-  if (post.properties['mp-slug']) post.properties['mp-slug'] = [slug];
+  // Title edits keep the permalink. Only an explicit slug or a new publish day moves it.
+  if (!properties['mp-slug']?.length && !properties.slug?.length) post.slug = slug;
+  if (post.properties['mp-slug']) post.properties['mp-slug'] = [post.slug];
+  const path = generateFilePath(post);
+  if (path === file.path) {
+    await backend.createOrUpdateFile(
+      path,
+      generateMarkdownFile(post),
+      `Update post: ${post.title || slug}`
+    );
+    return;
+  }
+  if (await backend.fileExists(path)) error(409, 'Another post already has that permalink');
+  // Write the new file first so a failed delete leaves the post reachable.
   await backend.createOrUpdateFile(
-    file.path,
+    path,
     generateMarkdownFile(post),
-    `Update post: ${post.title || slug}`
+    `Move post: ${slug} to ${postUrl(post)}`
   );
+  await backend.deleteFile(file.path, `Remove moved post: ${slug}`);
+  return postUrl(post);
 }

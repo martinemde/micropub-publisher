@@ -495,8 +495,8 @@
         success = currentPath
           ? `Post updated successfully! View at: ${location}`
           : `Post created successfully! View at: ${location}`;
-        // Update currentPath if this was a new post
-        if (!currentPath) {
+        // A create, or an update that moved the permalink, answers 201 with the new URL.
+        if (response.status === 201) {
           // The Location permalink /2026/07/21/slug names the stored file.
           const [year, month, day, createdSlug] = new URL(location).pathname.split('/').slice(-4);
           if (slug === submittedPost.slug) slug = createdSlug;

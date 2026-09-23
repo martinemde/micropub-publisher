@@ -663,3 +663,34 @@ test('restores an old local draft description as summary and sets updated time e
     new Date(document.querySelector<HTMLInputElement>('#updated-at')!.value).toISOString()
   ).toBe('2026-09-22T10:00:01.123Z');
 });
+
+test('follows a post to its new permalink when an update moves it', async () => {
+  memoryStorage();
+  const requests: Record<string, unknown>[] = [];
+  const locations = [
+    'https://blog.example/2026/09/20/draft-name',
+    'https://blog.example/2026/09/20/final-name'
+  ];
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url === '/api/posts') return Response.json([]);
+    requests.push(JSON.parse(init!.body as string));
+    return requests.length <= 2
+      ? new Response(null, { status: 201, headers: { Location: locations[requests.length - 1] } })
+      : new Response(null, { status: 204 });
+  });
+  startEditor();
+  button('Article').click();
+  flushSync();
+  fill('#title', 'Draft name');
+  fill('#content', 'Body');
+  button('Create Post').click();
+  await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
+  fill('#slug', 'final-name');
+  button('Update Post').click();
+  await vi.waitFor(() => expect(requests).toHaveLength(2));
+  expect(requests[1]).toMatchObject({ action: 'update', url: locations[0] });
+  await vi.waitFor(() => expect(document.body.textContent).toContain(locations[1]));
+  button('Update Post').click();
+  await vi.waitFor(() => expect(requests).toHaveLength(3));
+  expect(requests[2]).toMatchObject({ action: 'update', url: locations[1] });
+});
