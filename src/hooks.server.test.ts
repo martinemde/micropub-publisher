@@ -749,6 +749,24 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     );
     expect((await send({ action: 'undelete', url }, editor)).status).toBe(400);
   });
+  it('puts photos above the caption so they lead the post', async () => {
+    await send(
+      {
+        properties: {
+          content: ['A caption'],
+          photo: [
+            { value: 'https://example.com/one.png', alt: 'One' },
+            'https://example.com/two.png'
+          ]
+        }
+      },
+      token
+    );
+    const source = matter(Buffer.from([...githubWrites.values()][0], 'base64').toString());
+    expect(source.content.trim()).toBe(
+      '<img src="https://example.com/one.png" alt="One" />\n\n<img src="https://example.com/two.png" alt="" />\n\nA caption'
+    );
+  });
   it('rejects invalid updates without modifying any files', async () => {
     const created = await send({ properties: { content: ['Keep me'] } }, token);
     const url = created.headers.get('Location');
