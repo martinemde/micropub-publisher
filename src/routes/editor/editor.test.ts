@@ -306,6 +306,166 @@ function memoryStorage() {
   return storage;
 }
 
+function dropFiles(files: File[]) {
+  const event = new Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: { files, types: ['Files'] } });
+  document.querySelector('#content')!.dispatchEvent(event);
+  flushSync();
+  return event;
+}
+
+function mockImageUrls() {
+  const NativeURL = URL;
+  const revoke = vi.fn();
+  let count = 0;
+  vi.stubGlobal(
+    'URL',
+    class extends NativeURL {
+      static createObjectURL = () => `blob:preview-${++count}`;
+      static revokeObjectURL = revoke;
+    }
+  );
+  return revoke;
+}
+
+test('drops images at the selection and displays them in the editor and preview', async () => {
+  memoryStorage();
+  const urls = ['https://example.com/first.png', 'https://example.com/second.png'];
+  let uploads = 0;
+  const revoke = mockImageUrls();
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url === '/api/posts') return Response.json([]);
+    expect(url).toBe('/micropub/media');
+    expect((init!.body as FormData).get('file')).toBeInstanceOf(File);
+    return new Response(null, { status: 201, headers: { Location: urls[uploads++] } });
+  });
+  startEditor();
+  fill('#content', 'Before replace after');
+  const textarea = document.querySelector<HTMLTextAreaElement>('#content')!;
+  textarea.setSelectionRange(7, 14);
+  const event = dropFiles([
+    new File(['one'], 'first.png', { type: 'image/png' }),
+    new File(['two'], 'second.png', { type: 'image/png' })
+  ]);
+  expect(event.defaultPrevented).toBe(true);
+  await vi.waitFor(() => expect(uploads).toBe(2));
+  await vi.waitFor(() =>
+    expect(textarea.value).toBe(
+      'Before ![first.png](https://example.com/first.png)\n\n![second.png](https://example.com/second.png) after'
+    )
+  );
+  const images = document.querySelector('[aria-label="Content images"]')!;
+  expect([...images.querySelectorAll('img')].map((image) => image.getAttribute('src'))).toEqual([
+    'blob:preview-1',
+    'blob:preview-2'
+  ]);
+  button('Preview').click();
+  await vi.waitFor(() =>
+    expect(document.querySelector('[aria-label="Post preview"] img')?.getAttribute('src')).toBe(
+      'blob:preview-1'
+    )
+  );
+  expect(
+    [...document.querySelectorAll<HTMLImageElement>('[aria-label="Post preview"] img')].map(
+      (image) => image.alt
+    )
+  ).toEqual(['first.png', 'second.png']);
+  await unmount(editor);
+  editor = undefined as unknown as typeof editor;
+  expect(revoke.mock.calls).toEqual([['blob:preview-1'], ['blob:preview-2']]);
+});
+
+test.each(['rejected', 'missing Location'])(
+  'keeps the text when a dropped upload is %s',
+  async (failure) => {
+    memoryStorage();
+    vi.stubGlobal('fetch', async (url: string) =>
+      url === '/api/posts'
+        ? Response.json([])
+        : failure === 'rejected'
+          ? Response.json({ message: 'Failed to upload image' }, { status: 500 })
+          : new Response(null, { status: 201 })
+    );
+    startEditor();
+    fill('#content', 'Keep my draft');
+    dropFiles([new File(['image'], 'photo.png', { type: 'image/png' })]);
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Failed to upload image'));
+    expect(document.querySelector<HTMLTextAreaElement>('#content')!.value).toBe('Keep my draft');
+    expect(document.querySelector('[aria-label="Content images"]')).toBeNull();
+  }
+);
+
+test('keeps edits made while a dropped image uploads and escapes its Markdown alt text', async () => {
+  memoryStorage();
+  mockImageUrls();
+  let finishUpload!: (response: Response) => void;
+  vi.stubGlobal('fetch', async (url: string) =>
+    url === '/api/posts'
+      ? Response.json([])
+      : new Promise<Response>((resolve) => {
+          finishUpload = resolve;
+        })
+  );
+  startEditor();
+  fill('#content', 'Original');
+  dropFiles([new File(['image'], 'a [photo].png', { type: 'image/png' })]);
+  expect(button('Create Post').disabled).toBe(true);
+  fill('#content', 'Original with more text');
+  const textarea = document.querySelector<HTMLTextAreaElement>('#content')!;
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  finishUpload(
+    new Response(null, { status: 201, headers: { Location: 'https://example.com/photo.png' } })
+  );
+  await vi.waitFor(() =>
+    expect(textarea.value).toBe(
+      'Original with more text![a \\[photo\\].png](https://example.com/photo.png)'
+    )
+  );
+  button('Preview').click();
+  await vi.waitFor(() =>
+    expect(document.querySelector<HTMLImageElement>('[aria-label="Post preview"] img')?.alt).toBe(
+      'a [photo].png'
+    )
+  );
+});
+
+test('inserts a selected image at the caret and renders saved Markdown images after reload', async () => {
+  memoryStorage();
+  mockImageUrls();
+  vi.stubGlobal('fetch', async (url: string) =>
+    url === '/api/posts'
+      ? Response.json([])
+      : new Response(null, { status: 201, headers: { Location: 'https://example.com/photo.png' } })
+  );
+  startEditor();
+  fill('#content', 'Before after');
+  const textarea = document.querySelector<HTMLTextAreaElement>('#content')!;
+  textarea.setSelectionRange(7, 7);
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  Object.defineProperty(input, 'files', {
+    value: [new File(['image'], 'photo.png', { type: 'image/png' })]
+  });
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  await vi.waitFor(() =>
+    expect(textarea.value).toBe('Before ![photo.png](https://example.com/photo.png)after')
+  );
+  await vi.waitFor(() => expect(localStorage.getItem('blog-editor-draft')).not.toBeNull(), {
+    timeout: 2000
+  });
+  await unmount(editor);
+  document.body.replaceChildren();
+  startEditor();
+  expect(document.querySelector('[aria-label="Content images"] img')?.getAttribute('src')).toBe(
+    'https://example.com/photo.png'
+  );
+  button('Preview').click();
+  await vi.waitFor(() =>
+    expect(document.querySelector('[aria-label="Post preview"] img')?.getAttribute('src')).toBe(
+      'https://example.com/photo.png'
+    )
+  );
+});
+
 test.each(['Article', 'Note', 'Bookmark', 'Photo'])(
   'creates and updates a %s using its Micropub properties and logs the exchange',
   async (type) => {
@@ -508,6 +668,7 @@ test.each(['note', 'bookmark', 'photo'])(
 
 test('logs media upload metadata, HTTP failures, and network failures without losing the draft', async () => {
   memoryStorage();
+  mockImageUrls();
   let attempt = 0;
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
     if (url === '/api/posts') return Response.json([]);
