@@ -31,6 +31,7 @@
     categories: string;
     published: boolean;
     publishedAt?: string;
+    savedPublishedAt?: string;
     autoSlug: boolean;
     savedAt: string;
     currentPath: string;
@@ -39,6 +40,11 @@
   // Form state
   function localDateTime(date: Date): string {
     return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, -1);
+  }
+
+  function sameLocalDateTime(first: string, second: string): boolean {
+    // datetime-local inputs may remove zero seconds or fractional trailing zeros.
+    return new Date(first).getTime() === new Date(second).getTime();
   }
 
   let postType = $state<PostType>('article');
@@ -105,6 +111,7 @@
   let categories = $state('');
   let published = $state(false);
   let publishedAt = $state(localDateTime(new Date()));
+  let savedPublishedAt = $state('');
   let autoSlug = $state(true);
   let currentPath = $state(''); // Empty string means new post, otherwise path to existing post
 
@@ -167,6 +174,7 @@
         categories = draft.categories;
         published = draft.published ?? false;
         publishedAt = draft.publishedAt ?? localDateTime(new Date());
+        savedPublishedAt = draft.savedPublishedAt ?? '';
         autoSlug = draft.autoSlug;
         currentPath = draft.currentPath || '';
         lastSaved = new Date(draft.savedAt);
@@ -211,6 +219,7 @@
         categories,
         published,
         publishedAt,
+        savedPublishedAt,
         autoSlug,
         currentPath,
         savedAt: new Date().toISOString()
@@ -269,6 +278,7 @@
     categories = draft?.categories ?? '';
     published = draft?.published ?? false;
     publishedAt = draft?.publishedAt ?? localDateTime(new Date());
+    savedPublishedAt = draft?.savedPublishedAt ?? '';
     autoSlug = draft?.autoSlug ?? true;
     currentPath = '';
     error = '';
@@ -348,6 +358,7 @@
         .pop()
         ?.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
       publishedAt = localDateTime(new Date(frontmatter.date || filenameDate || Date.now()));
+      savedPublishedAt = publishedAt;
       categories = frontmatter.categories?.join(', ') || '';
       const originalContent = frontmatter.micropub?.properties?.content?.[0];
       content =
@@ -448,12 +459,12 @@
     try {
       const postDate = new Date(publishedAt).toISOString();
 
+      // src/content/blog/2026-07-21-slug.md is published at /2026/07/21/slug
       const postUrl = currentPath
-        ? `${data.siteUrl}/blog/${currentPath
+        ? `${data.siteUrl}/${currentPath
             .split('/')
             .pop()!
-            .replace(/^\d{4}-\d{2}-\d{2}-/, '')
-            .replace(/\.md$/, '')}`
+            .replace(/^(\d{4})-(\d{2})-(\d{2})-(.+)\.md$/, '$1/$2/$3/$4')}`
         : '';
       const properties = {
         ...(postType === 'article' || postType === 'bookmark'
@@ -470,9 +481,32 @@
         // Remove the old property when migrating an existing post to summary.
         ...(currentPath ? { description: [] } : {}),
         category: categories ? categories.split(',').map((c) => c.trim()) : [],
-        published: [postDate],
+        // The read API serializes legacy YAML dates as UTC timestamps. Leaving
+        // an unchanged date out preserves its stored date-only meaning (and
+        // avoids reinterpreting an unchanged local time across a DST overlap).
+        ...(!currentPath || !sameLocalDateTime(publishedAt, savedPublishedAt)
+          ? { published: [postDate] }
+          : {}),
         'post-status': [published ? 'published' : 'draft']
       };
+      if (currentPath && !savedPublishedAt) {
+        // Backups from before date baselines were saved need a fresh comparison.
+        // Build the payload first so edits made during this read stay unsaved.
+        const original = await loggedFetch(
+          `/api/posts/read?path=${encodeURIComponent(currentPath)}`
+        );
+        if (!original.ok) throw new Error('Failed to read the original publication date');
+        const { frontmatter } = await original.json();
+        const filenameDate = currentPath
+          .split('/')
+          .pop()
+          ?.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+        const baseline = frontmatter.date || filenameDate;
+        if (!baseline) throw new Error('Original publication date is missing');
+        savedPublishedAt = localDateTime(new Date(baseline));
+        if (sameLocalDateTime(submittedPost.publishedAt, savedPublishedAt))
+          delete properties.published;
+      }
       const response = await loggedFetch('/micropub', {
         method: 'POST',
         headers: {
@@ -495,18 +529,18 @@
         success = currentPath
           ? `Post updated successfully! View at: ${location}`
           : `Post created successfully! View at: ${location}`;
-        // Update currentPath if this was a new post
-        if (!currentPath) {
-          // Extract path from location or construct it
-          const datePrefix = postDate.slice(0, 10);
-          const createdSlug = new URL(location).pathname.split('/').pop()!;
+        // A create, or an update that moved the permalink, answers 201 with the new URL.
+        if (response.status === 201) {
+          // The Location permalink /2026/07/21/slug names the stored file.
+          const [year, month, day, createdSlug] = new URL(location).pathname.split('/').slice(-4);
           if (slug === submittedPost.slug) slug = createdSlug;
           autoSlug = false;
-          currentPath = `src/content/blog/${datePrefix}-${createdSlug}.md`;
+          currentPath = `src/content/blog/${year}-${month}-${day}-${createdSlug}.md`;
           submittedPost.slug = createdSlug;
           submittedPost.currentPath = currentPath;
         }
         savedPost = JSON.stringify(submittedPost);
+        savedPublishedAt = submittedPost.publishedAt;
         if (hasUnsavedChanges()) {
           // Preserve edits made while the request was in flight.
           saveDraft();

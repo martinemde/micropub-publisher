@@ -180,8 +180,8 @@ export async function runTest({
     const scripts = [...window.document.querySelectorAll('script')].map(
       (script) => script.textContent
     );
-    // Bun's jsdom VM loses top-level function declarations. A shared lexical
-    // scope preserves the unchanged scripts and their callback closures.
+    // A shared lexical scope keeps upstream declarations available across scripts
+    // while preserving the unchanged scripts and their callback closures.
     window.eval(`(function () {\n${[common, ...scripts].join('\n')}\n})();`);
     await new Promise((resolve) => $(resolve));
     if (number === 804) $('#access-token-input').val(tokens.restricted).trigger('change');

@@ -2,14 +2,14 @@
 
 ## Local upstream conformance
 
-Run `bun run conformance:setup` once to download micropub.rocks revision
+Run `pnpm run conformance:setup` once to download micropub.rocks revision
 `eeac57ad4b38e6a6cc0a31d6a4fe2bca2794f791`. The setup command verifies its SHA-256
 before extracting it into ignored `.conformance/upstream/`. After setup, test runs
 need no internet access, GitHub credentials, email login, or deployment.
 
-Run `bun run conformance` for the complete local baseline. To rerun specific
-cases, use e.g. `bun run conformance 100 200 600 800 801 803 804`.
-`bun run conformance --help` explains the command. The app and fixture server bind
+Run `pnpm run conformance` for the complete local baseline. To rerun specific
+cases, use e.g. `pnpm run conformance 100 200 600 800 801 803 804`.
+`pnpm run conformance --help` explains the command. The app and fixture server bind
 only to `127.0.0.1`, on ports 4177 and 4178; the command fails if either is busy and
 stops its own servers when it finishes.
 
@@ -19,8 +19,8 @@ unknown expressions fail the run. The adapter replaces the PHP HTTP proxy and
 report persistence, sending the upstream request payloads to the real SvelteKit
 HTTP server and feeding responses into the upstream assertions. This runs the
 upstream browser tests, not the PHP website, discovery/login flow, or its database.
-Bun's jsdom VM loses top-level function declarations, so the unchanged upstream
-scripts share a function scope. `bun test scripts/conformance/harness.test.mjs`
+The unchanged upstream scripts share a function scope so their declarations are
+available across scripts in jsdom. `pnpm run test:conformance`
 checks both passing and deliberately failing responses and pending manual checks.
 
 Each run copies the app into `.conformance/runs/<timestamp>/app/`, without `.env`,
@@ -58,15 +58,15 @@ query and all upstream assertions remain unchanged. Case 805 still verifies that
 actual duplicate transports are rejected. No upstream source files are edited.
 
 The local workflow `.github/workflows/conformance.yml` runs these commands on pushes
-and pull requests with Bun 1.4.2, no publishing credentials, and read-only repository
+and pull requests with pnpm 10.34.5 and Node 26.9.0, no publishing credentials, and read-only repository
 permissions. It uploads reports and generated post snapshots even on failure, without
 uploading the isolated app or dependency tree. It has not been run on GitHub yet.
 Pending judgments never count as passes.
 
 ## Local verification
 
-Run `bun run test`, `bun run check`, `bun run lint`, and `bun run build`.
-Run `bun run test src/hooks.server.test.ts` for the protocol transport regression tests.
+Run `pnpm run test`, `pnpm run check`, `pnpm run lint`, and `pnpm run build`.
+Run `pnpm run test src/hooks.server.test.ts` for the protocol transport regression tests.
 
 The hook tests exercise the real hook chain, session sealing, token store, parsers,
 and endpoint handlers. Transport tests use in-memory storage; authorization and

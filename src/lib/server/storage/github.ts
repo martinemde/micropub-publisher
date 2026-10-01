@@ -205,6 +205,23 @@ export class GitHubStorageBackend implements StorageBackend {
     }
   }
 
+  async listFiles(directory: string): Promise<string[]> {
+    try {
+      const { data } = await (
+        await this.client()
+      ).repos.getContent({
+        owner: this.owner,
+        repo: this.repo,
+        path: directory
+      });
+      if (!Array.isArray(data)) throw new Error('Expected directory listing');
+      return data.filter((file) => file.type === 'file').map((file) => file.name);
+    } catch (error: unknown) {
+      if (hasHttpStatus(error) && error.status === 404) return [];
+      throw error;
+    }
+  }
+
   async listBlogPosts(): Promise<BlogPostFileInfo[]> {
     try {
       const { data } = await (

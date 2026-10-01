@@ -7,8 +7,8 @@
     "dev": "vite dev",
     "build": "svelte-kit sync && vite build",
     "start": "wrangler dev",
-    "deploy": "bun run build && wrangler deploy",
-    "test:cloudflare": "WRANGLER_LOG_PATH=.wrangler/logs WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir .wrangler/dry-run && bun test scripts/cloudflare.test.mjs",
+    "deploy": "pnpm run build && wrangler deploy",
+    "test:cloudflare": "WRANGLER_LOG_PATH=.wrangler/logs WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --outdir .wrangler/dry-run && vitest run --config vitest.scripts.config.ts scripts/cloudflare.test.mjs",
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --tsgo",
@@ -16,8 +16,9 @@
     "lint": "prettier --check . && eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "conformance:setup": "bun scripts/conformance/setup.mjs",
-    "conformance": "bun scripts/conformance/run.mjs"
+    "conformance:setup": "node scripts/conformance/setup.mjs",
+    "conformance": "node scripts/conformance/run.mjs",
+    "test:conformance": "vitest run --config vitest.scripts.config.ts scripts/conformance/harness.test.mjs"
   },
   "dependencies": {
     "@octokit/rest": "^22.0.1",
@@ -58,5 +59,6 @@
     "vite": "^8.2.2",
     "vitest": "^4.1.11",
     "wrangler": "4"
-  }
+  },
+  "packageManager": "pnpm@10.34.5"
 }

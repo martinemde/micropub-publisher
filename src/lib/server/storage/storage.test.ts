@@ -7,6 +7,23 @@ import { join } from 'node:path';
 // Note: env mocks are in vitest-setup.ts
 // For the factory tests that need dynamic env values, we import the factory dynamically
 
+describe.each([TestStorageBackend, FileStorageBackend])('%s directory listing', (Backend) => {
+  afterEach(() => rmSync('tmp-test-storage', { recursive: true, force: true }));
+  it('lists immediate files and treats missing directories as empty', async () => {
+    const backend = new Backend();
+    expect(await backend.listFiles('tmp-test-storage/missing')).toEqual([]);
+    await backend.createOrUpdateFile(
+      'tmp-test-storage/archives/2026-07-21-legacy.json',
+      '{}',
+      'Seed'
+    );
+    await backend.createOrUpdateFile('tmp-test-storage/archives/nested/ignore.json', '{}', 'Seed');
+    expect(await backend.listFiles('tmp-test-storage/archives')).toEqual([
+      '2026-07-21-legacy.json'
+    ]);
+  });
+});
+
 describe('TestStorageBackend', () => {
   let backend: TestStorageBackend;
 

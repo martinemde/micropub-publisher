@@ -13,14 +13,19 @@ export function createJudge(appDir, fixtureDir) {
       (entry) => entry.response.code === 201 && entry.response.location
     );
     assert(creation, 'Creation must succeed before manual verification');
-    const slug = new URL(creation.response.location).pathname.split('/').at(-1);
+    const [year, month, day, slug] = new URL(creation.response.location).pathname
+      .split('/')
+      .slice(-4);
     assert(/^[\w-]+$/.test(slug));
     const directory = join(appDir, 'src/content/blog');
     const files = (await readdir(directory)).filter((name) => name.endsWith(`-${slug}.md`));
     if (id === 'passed_delete') {
       assert.equal(files.length, 0, 'Deleted post must be absent from blog content');
       const archive = JSON.parse(
-        await readFile(join(appDir, '.micropub/deleted', `${slug}.json`), 'utf8')
+        await readFile(
+          join(appDir, '.micropub/deleted', `${year}-${month}-${day}-${slug}.json`),
+          'utf8'
+        )
       );
       assert(
         matter(archive.content).data.micropub.properties.content?.length,

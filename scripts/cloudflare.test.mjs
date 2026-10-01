@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test';
+import { test, expect } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

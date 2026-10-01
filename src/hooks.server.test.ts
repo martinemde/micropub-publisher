@@ -34,10 +34,10 @@ vi.mock('@octokit/rest', () => ({
     repos = {
       get: async () => ({ data: { owner: { login: 'test_owner' } } }),
       getContent: async ({ path }: { path: string }) => {
-        if (path === 'src/content/blog')
+        if (path === 'src/content/blog' || path === '.micropub/deleted')
           return {
             data: [...githubWrites.keys()]
-              .filter((path) => path.startsWith('src/content/blog/'))
+              .filter((filePath) => filePath.startsWith(`${path}/`))
               .map((path) => ({ type: 'file', name: path.split('/').pop(), path }))
           };
         if (githubWrites.has(path))
@@ -290,13 +290,15 @@ describe('Micropub authorization and actions', () => {
 describe('Micropub transport through server hooks', () => {
   // micropub.rocks server cases 100, 800, and 801.
   it.each(['header', 'body'])('accepts a form post with a token in the %s', async (where) => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-07-21T20:43:09Z') });
     const body = new URLSearchParams({ h: 'entry', content: 'Hello from a client' });
     const headers: Record<string, string> = { Origin: client };
     if (where === 'header') headers.Authorization = `Bearer ${token}`;
     else body.set('access_token', token);
     const { response } = await request('/micropub', { method: 'POST', headers, body });
     expect(response.status).toBe(201);
-    expect(response.headers.get('Location')).toBe('https://example.com/blog/untitled-post');
+    // Untitled posts are named for their Pacific publish time.
+    expect(response.headers.get('Location')).toBe('https://example.com/2026/07/21/134309');
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
     expect(response.headers.get('Access-Control-Expose-Headers')).toBe('Location');
   });
@@ -522,6 +524,8 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     expect(first.headers.get('Location')).not.toBe(second.headers.get('Location'));
     expect(githubWrites.size).toBe(2);
     const url = first.headers.get('Location');
+    const originalDate = matter(Buffer.from([...githubWrites.values()][0], 'base64').toString())
+      .data.date;
     for (const action of ['update', 'delete', 'undelete']) {
       const rejected = await send({ action, url, replace: { content: ['Changed'] } }, token);
       expect(rejected.status).toBe(401);
@@ -545,7 +549,8 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     expect((await query.response.json()).properties).toEqual({
       name: ['A post'],
       content: ['Changed'],
-      category: ['a', 'c']
+      category: ['a', 'c'],
+      published: [originalDate]
     });
     const before = new Map(githubWrites);
     expect((await send({ action: 'delete', url }, editor)).status).toBe(204);
@@ -577,6 +582,173 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     });
     expect(source).not.toContain(token);
   });
+  it('reuses a slug on another day and still finds posts by legacy /blog/ URLs', async () => {
+    const editor = storeAccessToken('fake', 'https://example.com/', 'update');
+    const post = (published: string) => ({
+      properties: { content: ['Same time'], 'mp-slug': ['daily'], published: [published] }
+    });
+    const first = await send(post('2026-07-21T20:43:09Z'), token);
+    expect(first.headers.get('Location')).toBe('https://example.com/2026/07/21/daily');
+    const legacy = { action: 'update', url: 'https://example.com/blog/daily' };
+    expect((await send({ ...legacy, replace: { content: ['Edited'] } }, editor)).status).toBe(204);
+    const second = await send(post('2026-07-22T20:43:09Z'), token);
+    expect(second.headers.get('Location')).toBe('https://example.com/2026/07/22/daily');
+    expect([...githubWrites.keys()].sort()).toEqual([
+      'src/content/blog/2026-07-21-daily.md',
+      'src/content/blog/2026-07-22-daily.md'
+    ]);
+    const ambiguous = await send({ ...legacy, replace: { content: ['Which?'] } }, editor);
+    expect(ambiguous.status).toBe(400);
+  });
+  it('moves a post when an update changes its slug or publish day', async () => {
+    const editor = storeAccessToken('fake', 'https://example.com/', 'update');
+    const created = await send(
+      {
+        properties: {
+          name: ['Moving'],
+          content: ['Body'],
+          'mp-slug': ['first'],
+          published: ['2026-07-21T20:00:00Z']
+        }
+      },
+      token
+    );
+    const paths = () =>
+      [...githubWrites.keys()].filter((path) => path.startsWith('src/content/blog/2026-07-2'));
+    const update = (url: string | null, replace: object) =>
+      send({ action: 'update', url, replace }, editor);
+
+    const retitled = await update(created.headers.get('Location'), { name: ['Renamed title'] });
+    expect(retitled.status).toBe(204);
+    expect(paths()).toEqual(['src/content/blog/2026-07-21-first.md']);
+
+    const reslugged = await update(created.headers.get('Location'), { 'mp-slug': ['second'] });
+    expect(reslugged.status).toBe(201);
+    expect(reslugged.headers.get('Location')).toBe('https://example.com/2026/07/21/second');
+    expect(paths()).toEqual(['src/content/blog/2026-07-21-second.md']);
+
+    const redated = await update(reslugged.headers.get('Location'), {
+      published: ['2026-07-24T02:00:00Z']
+    });
+    // 2026-07-24T02:00Z is still July 23 in Pacific time.
+    expect(redated.headers.get('Location')).toBe('https://example.com/2026/07/23/second');
+    expect(paths()).toEqual(['src/content/blog/2026-07-23-second.md']);
+    const source = matter(
+      Buffer.from(githubWrites.get('src/content/blog/2026-07-23-second.md')!, 'base64').toString()
+    );
+    expect(source.data).toMatchObject({ title: 'Renamed title', slug: 'second' });
+  });
+  it('refuses to move a post onto another permalink', async () => {
+    const editor = storeAccessToken('fake', 'https://example.com/', 'update');
+    const post = (slug: string) => ({
+      properties: { content: [slug], 'mp-slug': [slug], published: ['2026-07-21T20:00:00Z'] }
+    });
+    const first = await send(post('one'), token);
+    await send(post('two'), token);
+    const moved = await send(
+      { action: 'update', url: first.headers.get('Location'), replace: { 'mp-slug': ['two'] } },
+      editor
+    );
+    expect(moved.status).toBe(409);
+    expect(githubWrites.has('src/content/blog/2026-07-21-one.md')).toBe(true);
+  });
+  it('keeps unquoted legacy dates on their own day when editing', async () => {
+    const editor = storeAccessToken('fake', 'https://example.com/', 'update');
+    const path = 'src/content/blog/2025-12-19-legacy.md';
+    githubWrites.set(
+      path,
+      Buffer.from('---\ntitle: Legacy\ndate: 2025-12-19\nslug: legacy\n---\nOld body\n').toString(
+        'base64'
+      )
+    );
+    const updated = await send(
+      {
+        action: 'update',
+        url: 'https://example.com/2025/12/19/legacy',
+        replace: { content: ['New body'] }
+      },
+      editor
+    );
+    expect(updated.status).toBe(204);
+    expect([...githubWrites.keys()]).toEqual([path]);
+  });
+  it('preserves an implicit publication date when editing on a later day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-07-21T20:43:09Z') });
+    const created = await send({ properties: { content: ['Original'] } }, token);
+    const url = created.headers.get('Location')!;
+    const path = 'src/content/blog/2026-07-21-134309.md';
+    const original = matter(Buffer.from(githubWrites.get(path)!, 'base64').toString());
+    expect(original.data.micropub.properties.published).toBeUndefined();
+    const editor = storeAccessToken('fake', 'https://example.com/', 'update');
+    vi.setSystemTime(new Date('2026-07-22T20:43:09Z'));
+    const query = await request(`/micropub?${new URLSearchParams({ q: 'source', url })}`, {
+      headers: { Authorization: `Bearer ${editor}` }
+    });
+    expect((await query.response.json()).properties.published).toEqual([original.data.date]);
+    const updated = await send({ action: 'update', url, replace: { content: ['Edited'] } }, editor);
+    expect(updated.status).toBe(204);
+    expect(updated.headers.has('Location')).toBe(false);
+    expect([...githubWrites.keys()]).toEqual([path]);
+    const saved = matter(Buffer.from(githubWrites.get(path)!, 'base64').toString());
+    expect(saved.data.date).toBe(original.data.date);
+    expect(saved.content.trim()).toBe('Edited');
+  });
+  it('restores a post deleted through its legacy URL byte for byte', async () => {
+    const created = await send(
+      { properties: { content: ['Original'], slug: ['legacy'], published: ['2026-07-21'] } },
+      token
+    );
+    expect(created.status).toBe(201);
+    const editor = storeAccessToken('fake', 'https://example.com/', 'delete undelete');
+    const url = 'https://example.com/blog/legacy';
+    const before = new Map(githubWrites);
+    expect((await send({ action: 'delete', url }, editor)).status).toBe(204);
+    expect([...githubWrites.keys()]).toEqual(['.micropub/deleted/2026-07-21-legacy.json']);
+    expect((await send({ action: 'undelete', url }, editor)).status).toBe(204);
+    expect(githubWrites).toEqual(before);
+  });
+  it('rejects ambiguous legacy restores and still restores an exact dated URL', async () => {
+    const editor = storeAccessToken('fake', 'https://example.com/', 'delete undelete');
+    for (const day of ['2026-07-21', '2026-07-22']) {
+      const created = await send(
+        { properties: { content: [day], slug: ['daily'], published: [day] } },
+        token
+      );
+      expect(
+        (await send({ action: 'delete', url: created.headers.get('Location') }, editor)).status
+      ).toBe(204);
+    }
+    const before = new Map(githubWrites);
+    expect(
+      (await send({ action: 'undelete', url: 'https://example.com/blog/daily' }, editor)).status
+    ).toBe(400);
+    expect(githubWrites).toEqual(before);
+    expect(
+      (await send({ action: 'undelete', url: 'https://example.com/2026/07/21/daily' }, editor))
+        .status
+    ).toBe(204);
+    expect(githubWrites.has('.micropub/deleted/2026-07-22-daily.json')).toBe(true);
+  });
+  it('matches exact archived slugs and validates their saved paths', async () => {
+    const editor = storeAccessToken('fake', 'https://example.com/', 'undelete');
+    const url = 'https://example.com/blog/legacy';
+    expect((await send({ action: 'undelete', url }, editor)).status).toBe(404);
+    githubWrites.set(
+      '.micropub/deleted/2026-07-21-other-legacy.json',
+      Buffer.from('{}').toString('base64')
+    );
+    expect((await send({ action: 'undelete', url }, editor)).status).toBe(404);
+    githubWrites.set(
+      '.micropub/deleted/2026-07-21-legacy.json',
+      Buffer.from(
+        JSON.stringify({
+          path: 'src/content/blog/2026-07-22-legacy.md',
+          content: 'Wrong day'
+        })
+      ).toString('base64')
+    );
+    expect((await send({ action: 'undelete', url }, editor)).status).toBe(400);
+  });
   it('rejects invalid updates without modifying any files', async () => {
     const created = await send({ properties: { content: ['Keep me'] } }, token);
     const url = created.headers.get('Location');
@@ -605,6 +777,7 @@ describe('Publishing workflow extensions', () => {
         category: ['reading'],
         'bookmark-of': ['https://example.org/page?a=1&b=2'],
         'mp-slug': ['My Bookmark'],
+        published: ['2026-07-22T03:00:00Z'],
         'post-status': ['draft']
       };
       const body =
@@ -620,7 +793,7 @@ describe('Publishing workflow extensions', () => {
       };
       const { response } = await request('/micropub', { method: 'POST', headers, body });
       expect(response.status).toBe(201);
-      expect(response.headers.get('Location')).toBe('https://example.com/blog/my-bookmark');
+      expect(response.headers.get('Location')).toBe('https://example.com/2026/07/21/my-bookmark');
       const source = matter(Buffer.from([...githubWrites.values()][0], 'base64').toString());
       expect(source.data.published).toBe(false);
       expect(source.data.micropub.properties).toEqual({ ...props, 'mp-slug': ['my-bookmark'] });
