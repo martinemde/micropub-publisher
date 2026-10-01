@@ -82,20 +82,20 @@ The backend is automatically selected based on environment:
 
 1. **Environment variable override**: Set `MICROPUB_BACKEND` to `github`, `file`, or `test`
 2. **Auto-detection** (if no env var set):
-   - **Dev mode** (`bun run dev`): File backend
+   - **Dev mode** (`pnpm run dev`): File backend
    - **Production**: GitHub backend
 
 Examples:
 
 ```bash
 # Use file backend explicitly
-MICROPUB_BACKEND=file bun run dev
+MICROPUB_BACKEND=file pnpm run dev
 
 # Use GitHub backend in development (requires authentication)
-MICROPUB_BACKEND=github bun run dev
+MICROPUB_BACKEND=github pnpm run dev
 
 # Default: auto-detects (file in dev, GitHub in production)
-bun run dev
+pnpm run dev
 ```
 
 ### Testing with Different Backends

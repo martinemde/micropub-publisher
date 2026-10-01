@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -23,11 +25,7 @@ const staging = join(cache, `upstream-${process.pid}`);
 await writeFile(archive, bytes);
 await mkdir(staging);
 try {
-  const tar = Bun.spawn(['tar', '-xzf', archive, '-C', staging, '--strip-components=1'], {
-    stdout: 'inherit',
-    stderr: 'inherit'
-  });
-  if (await tar.exited) throw new Error('Could not extract upstream archive');
+  await promisify(execFile)('tar', ['-xzf', archive, '-C', staging, '--strip-components=1']);
   await writeFile(join(staging, '.revision'), revision);
   await rm(directory, { recursive: true, force: true });
   await rename(staging, directory);

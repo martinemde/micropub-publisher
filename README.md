@@ -41,9 +41,10 @@ omit session credentials and binary file contents, and clear on reload.
 ## Run locally
 
 ```sh
+mise install
 cp .env.example .env.local
-bun install
-bun run dev
+pnpm install
+pnpm run dev
 ```
 
 For development, use a separate GitHub App with callback `http://localhost:5180/login/callback`.
@@ -63,17 +64,17 @@ The published site's identity page must advertise the standalone endpoints:
 ## Verify
 
 ```sh
-bun run format
-bun run lint
-bun run check
-bun run test
-bun run build
+pnpm run format
+pnpm run lint
+pnpm run check
+pnpm run test
+pnpm run build
 ```
 
 Tests fake GitHub and other external services at the application boundary. They do not access a network, account, or repository.
 
-For the independent upstream conformance tests, run `bun run conformance:setup`
-once, then `bun run conformance`. This starts an isolated local app, runs the
+For the independent upstream conformance tests, run `pnpm run conformance:setup`
+once, then `pnpm run conformance`. This starts an isolated local app, runs the
 pinned micropub.rocks browser assertions over HTTP, and saves artifacts under
 `.conformance/runs/`. Failures and unresolved manual checks produce a nonzero exit code. File-backed
 judgments record evidence for the manual cases. The GitHub Actions workflow runs
@@ -110,9 +111,9 @@ secret stable across deployments to preserve cookies and authorization codes.
 Verify locally before deployment:
 
 ```sh
-bun run build
-bun run test:cloudflare
-bun run conformance
+pnpm run build
+pnpm run test:cloudflare
+pnpm run conformance
 ```
 
 `test:cloudflare` bundles with Wrangler's dry run, then runs the actual Worker in
@@ -123,15 +124,15 @@ revocation surviving another restart. It never uses real credentials or GitHub.
 For the initial deployment, authenticate Wrangler and run:
 
 ```sh
-bun run build
-bunx wrangler deploy --secrets-file .env.production.local
+pnpm run build
+pnpm exec wrangler deploy --secrets-file .env.production.local
 ```
 
 That file must contain only the three secret values; public origins and repository
 settings belong in `wrangler.jsonc`. Never put secrets in command arguments. A Worker
 must exist before OpenTofu can attach its custom domain. In `../cloudflare`, run
 `make plan`, review the publisher domain addition, then `make apply`.
-Subsequent code deployments use `bun run deploy` without rotating secrets or
+Subsequent code deployments use `pnpm run deploy` without rotating secrets or
 reapplying unchanged infrastructure. Verify HTTPS and the login redirect at
 `https://publish.martinemde.com/auth/github/login`, then complete a real login
 before considering deployment verified. Micropub clients also need the identity

@@ -1,3 +1,6 @@
+import { spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
+import { finished } from 'node:stream/promises';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
@@ -10,14 +13,14 @@ const directory = join(root, '.conformance/upstream');
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
   console.log(
-    'Usage: bun run conformance [case numbers]\nRuns pinned micropub.rocks assertions against an isolated local app.\nWithout case numbers, runs all cases except excluded syndication test 601.\nExit: 0 all selected cases pass; 1 failure or pending manual check; 2 harness error.'
+    'Usage: pnpm run conformance [case numbers]\nRuns pinned micropub.rocks assertions against an isolated local app.\nWithout case numbers, runs all cases except excluded syndication test 601.\nExit: 0 all selected cases pass; 1 failure or pending manual check; 2 harness error.'
   );
   process.exit(0);
 }
 if (args.some((arg) => !/^\d{3}$/.test(arg)))
   throw new Error('Expected case numbers, e.g. 100 200 600 803 804');
 if ((await readFile(join(directory, '.revision'), 'utf8').catch(() => '')) !== revision) {
-  throw new Error('Run bun run conformance:setup first to download the pinned upstream suite.');
+  throw new Error('Run pnpm run conformance:setup first to download the pinned upstream suite.');
 }
 const available = (await readdir(join(directory, 'views/server-tests')))
   .filter((name) => /^\d+\.php$/.test(name))
@@ -63,6 +66,7 @@ const fixtures = createServer(async (request, response) => {
   }
 });
 let child;
+let childExited;
 let log;
 let tokens;
 const logReaders = [];
@@ -76,18 +80,21 @@ async function stop() {
   if (child) {
     child.kill('SIGTERM');
     const stopped = await Promise.race([
-      child.exited.then(() => true),
+      childExited.then(() => true),
       new Promise((r) => setTimeout(() => r(false), 5000))
     ]);
     if (!stopped) {
       child.kill('SIGKILL');
-      await child.exited;
+      await childExited;
     }
     child = undefined;
   }
   await new Promise((r) => fixtures.close(r));
   await Promise.all(logReaders);
-  await log?.end();
+  if (log) {
+    log.end();
+    await finished(log);
+  }
 }
 for (const signal of ['SIGINT', 'SIGTERM'])
   process.on(signal, async () => {
@@ -100,8 +107,8 @@ try {
     fixtures.once('error', reject);
     fixtures.listen(4178, '127.0.0.1', ready);
   });
-  log = Bun.file(join(runDir, 'app.log')).writer();
-  child = Bun.spawn([process.execPath, join(root, 'scripts/conformance/app.mjs'), root, appDir], {
+  log = createWriteStream(join(runDir, 'app.log'));
+  child = spawn(process.execPath, [join(root, 'scripts/conformance/app.mjs'), root, appDir], {
     cwd: root,
     env: {
       PATH: process.env.PATH,
@@ -114,13 +121,18 @@ try {
       GITHUB_REPO: 'local-only',
       SESSION_SECRET: 'local-conformance-only-not-a-production-secret'
     },
-    stdout: 'pipe',
-    stderr: 'pipe'
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  childExited = new Promise((resolve) => child.once('close', resolve));
+  const started = new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
   });
   const copyLog = async (stream) => {
     for await (const chunk of stream) log.write(chunk);
   };
   logReaders.push(copyLog(child.stdout), copyLog(child.stderr));
+  await started;
   const deadline = Date.now() + 30000;
   while (!tokens && Date.now() < deadline) {
     if (child.exitCode !== null)
