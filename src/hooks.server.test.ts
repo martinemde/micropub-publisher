@@ -34,10 +34,10 @@ vi.mock('@octokit/rest', () => ({
     repos = {
       get: async () => ({ data: { owner: { login: 'test_owner' } } }),
       getContent: async ({ path }: { path: string }) => {
-        if (path === 'src/content/blog')
+        if (path === 'src/content/blog' || path === '.micropub/deleted')
           return {
             data: [...githubWrites.keys()]
-              .filter((path) => path.startsWith('src/content/blog/'))
+              .filter((filePath) => filePath.startsWith(`${path}/`))
               .map((path) => ({ type: 'file', name: path.split('/').pop(), path }))
           };
         if (githubWrites.has(path))
@@ -524,6 +524,8 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     expect(first.headers.get('Location')).not.toBe(second.headers.get('Location'));
     expect(githubWrites.size).toBe(2);
     const url = first.headers.get('Location');
+    const originalDate = matter(Buffer.from([...githubWrites.values()][0], 'base64').toString())
+      .data.date;
     for (const action of ['update', 'delete', 'undelete']) {
       const rejected = await send({ action, url, replace: { content: ['Changed'] } }, token);
       expect(rejected.status).toBe(401);
@@ -547,7 +549,8 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     expect((await query.response.json()).properties).toEqual({
       name: ['A post'],
       content: ['Changed'],
-      category: ['a', 'c']
+      category: ['a', 'c'],
+      published: [originalDate]
     });
     const before = new Map(githubWrites);
     expect((await send({ action: 'delete', url }, editor)).status).toBe(204);
@@ -668,6 +671,83 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     );
     expect(updated.status).toBe(204);
     expect([...githubWrites.keys()]).toEqual([path]);
+  });
+  it('preserves an implicit publication date when editing on a later day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-07-21T20:43:09Z') });
+    const created = await send({ properties: { content: ['Original'] } }, token);
+    const url = created.headers.get('Location')!;
+    const path = 'src/content/blog/2026-07-21-134309.md';
+    const original = matter(Buffer.from(githubWrites.get(path)!, 'base64').toString());
+    expect(original.data.micropub.properties.published).toBeUndefined();
+    const editor = storeAccessToken('fake', 'https://example.com/', 'update');
+    vi.setSystemTime(new Date('2026-07-22T20:43:09Z'));
+    const query = await request(`/micropub?${new URLSearchParams({ q: 'source', url })}`, {
+      headers: { Authorization: `Bearer ${editor}` }
+    });
+    expect((await query.response.json()).properties.published).toEqual([original.data.date]);
+    const updated = await send({ action: 'update', url, replace: { content: ['Edited'] } }, editor);
+    expect(updated.status).toBe(204);
+    expect(updated.headers.has('Location')).toBe(false);
+    expect([...githubWrites.keys()]).toEqual([path]);
+    const saved = matter(Buffer.from(githubWrites.get(path)!, 'base64').toString());
+    expect(saved.data.date).toBe(original.data.date);
+    expect(saved.content.trim()).toBe('Edited');
+  });
+  it('restores a post deleted through its legacy URL byte for byte', async () => {
+    const created = await send(
+      { properties: { content: ['Original'], slug: ['legacy'], published: ['2026-07-21'] } },
+      token
+    );
+    expect(created.status).toBe(201);
+    const editor = storeAccessToken('fake', 'https://example.com/', 'delete undelete');
+    const url = 'https://example.com/blog/legacy';
+    const before = new Map(githubWrites);
+    expect((await send({ action: 'delete', url }, editor)).status).toBe(204);
+    expect([...githubWrites.keys()]).toEqual(['.micropub/deleted/2026-07-21-legacy.json']);
+    expect((await send({ action: 'undelete', url }, editor)).status).toBe(204);
+    expect(githubWrites).toEqual(before);
+  });
+  it('rejects ambiguous legacy restores and still restores an exact dated URL', async () => {
+    const editor = storeAccessToken('fake', 'https://example.com/', 'delete undelete');
+    for (const day of ['2026-07-21', '2026-07-22']) {
+      const created = await send(
+        { properties: { content: [day], slug: ['daily'], published: [day] } },
+        token
+      );
+      expect(
+        (await send({ action: 'delete', url: created.headers.get('Location') }, editor)).status
+      ).toBe(204);
+    }
+    const before = new Map(githubWrites);
+    expect(
+      (await send({ action: 'undelete', url: 'https://example.com/blog/daily' }, editor)).status
+    ).toBe(400);
+    expect(githubWrites).toEqual(before);
+    expect(
+      (await send({ action: 'undelete', url: 'https://example.com/2026/07/21/daily' }, editor))
+        .status
+    ).toBe(204);
+    expect(githubWrites.has('.micropub/deleted/2026-07-22-daily.json')).toBe(true);
+  });
+  it('matches exact archived slugs and validates their saved paths', async () => {
+    const editor = storeAccessToken('fake', 'https://example.com/', 'undelete');
+    const url = 'https://example.com/blog/legacy';
+    expect((await send({ action: 'undelete', url }, editor)).status).toBe(404);
+    githubWrites.set(
+      '.micropub/deleted/2026-07-21-other-legacy.json',
+      Buffer.from('{}').toString('base64')
+    );
+    expect((await send({ action: 'undelete', url }, editor)).status).toBe(404);
+    githubWrites.set(
+      '.micropub/deleted/2026-07-21-legacy.json',
+      Buffer.from(
+        JSON.stringify({
+          path: 'src/content/blog/2026-07-22-legacy.md',
+          content: 'Wrong day'
+        })
+      ).toString('base64')
+    );
+    expect((await send({ action: 'undelete', url }, editor)).status).toBe(400);
   });
   it('rejects invalid updates without modifying any files', async () => {
     const created = await send({ properties: { content: ['Keep me'] } }, token);

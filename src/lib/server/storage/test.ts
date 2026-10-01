@@ -35,6 +35,14 @@ export class TestStorageBackend implements StorageBackend {
     return content;
   }
 
+  async listFiles(directory: string): Promise<string[]> {
+    const prefix = `${directory}/`;
+    return [...this.files.keys()]
+      .filter((path) => path.startsWith(prefix))
+      .map((path) => path.slice(prefix.length))
+      .filter((name) => !name.includes('/'));
+  }
+
   async listBlogPosts(): Promise<BlogPostFileInfo[]> {
     const posts: BlogPostFileInfo[] = [];
 

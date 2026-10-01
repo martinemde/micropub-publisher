@@ -189,7 +189,15 @@ const yamlDate = (date: Date) =>
   date.getTime() % 86_400_000 === 0 ? date.toISOString().slice(0, 10) : date.toISOString();
 export function readProperties(source: string): MicropubProperties {
   const { data, content } = matter(source);
-  if (data.micropub?.properties) return normalizeProperties(data.micropub.properties);
+  const published = data.date instanceof Date ? yamlDate(data.date) : data.date;
+  if (data.micropub?.properties) {
+    const properties = normalizeProperties(data.micropub.properties);
+    // Clients may omit published on creation. Preserve the date we stored instead
+    // of assigning today's date when that post is edited later.
+    if (!properties.published?.length && published !== undefined)
+      properties.published = [published];
+    return properties;
+  }
   return normalizeProperties(
     Object.fromEntries(
       Object.entries({
@@ -197,7 +205,7 @@ export function readProperties(source: string): MicropubProperties {
         content,
         category: data.categories,
         slug: data.slug,
-        published: data.date instanceof Date ? yamlDate(data.date) : data.date,
+        published,
         description: data.description,
         'post-status': data.published ? 'published' : 'draft'
       }).filter(([, value]) => value !== undefined)

@@ -1,6 +1,10 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { mount, unmount, flushSync } from 'svelte';
 import Editor from './+page.svelte';
+import matter from 'gray-matter';
+import { TestStorageBackend } from '$lib/server/storage/test';
+import { mutatePost } from '$lib/server/micropub-posts';
+import { env } from '$env/dynamic/public';
 
 vi.mock('$app/environment', () => ({ browser: true, dev: true, building: false }));
 
@@ -10,6 +14,7 @@ afterEach(async () => {
   document.body.replaceChildren();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  env.PUBLIC_SITE_URL = 'https://example.com';
 });
 
 test.each([
@@ -176,13 +181,10 @@ test.each(['unchanged', 'edited', 'now', 'new'])(
     await vi.waitFor(() =>
       expect(document.querySelector('main')?.textContent).toContain('successfully')
     );
-    expect(requests).toEqual([
-      expect.objectContaining({
-        [scenario === 'new' ? 'properties' : 'replace']: expect.objectContaining({
-          published: [expected]
-        })
-      })
-    ]);
+    expect(requests).toHaveLength(1);
+    const sent = requests[0][scenario === 'new' ? 'properties' : 'replace'];
+    if (scenario === 'unchanged') expect(sent).not.toHaveProperty('published');
+    else expect(sent).toMatchObject({ published: [expected] });
     confirm.mockClear();
     postButton().click();
     expect(confirm).not.toHaveBeenCalled();
@@ -694,3 +696,98 @@ test('follows a post to its new permalink when an update moves it', async () => 
   await vi.waitFor(() => expect(requests).toHaveLength(3));
   expect(requests[2]).toMatchObject({ action: 'update', url: locations[1] });
 });
+
+test.each(['loaded', 'normalized input', 'draft reload', 'old draft'])(
+  'keeps a legacy date-only permalink through an editor content edit: %s',
+  async (scenario) => {
+    env.PUBLIC_SITE_URL = 'https://blog.example';
+    const storage = memoryStorage();
+    const backend = new TestStorageBackend();
+    const path = 'src/content/blog/2025-12-19-legacy.md';
+    await backend.createOrUpdateFile(
+      path,
+      '---\ntitle: Legacy\ndate: 2025-12-19\nslug: legacy\npublished: true\n---\nOriginal body\n',
+      'Seed'
+    );
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (url === '/api/posts') return Response.json(await backend.listBlogPosts());
+      if (url.startsWith('/api/posts/read?')) {
+        const { data: frontmatter, content } = matter(await backend.readFile(path));
+        // Match the real API's YAML Date -> JSON timestamp round trip.
+        return Response.json({ frontmatter, content });
+      }
+      const payload = JSON.parse(init!.body as string);
+      requests.push(payload);
+      const moved = await mutatePost(backend, payload);
+      return new Response(
+        null,
+        moved ? { status: 201, headers: { Location: moved } } : { status: 204 }
+      );
+    });
+    startEditor();
+    await vi.waitFor(() =>
+      expect(document.querySelector('aside')?.textContent).toContain('legacy')
+    );
+    [...document.querySelectorAll<HTMLButtonElement>('aside button')]
+      .find((item) => item.textContent?.includes('legacy'))!
+      .click();
+    await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
+    fill('#content', 'Edited body');
+    if (scenario === 'normalized input')
+      fill('#published-at', document.querySelector<HTMLInputElement>('#published-at')!.value);
+    if (scenario === 'draft reload' || scenario === 'old draft') {
+      await vi.waitFor(() => expect(storage.has('blog-editor-draft')).toBe(true), {
+        timeout: 2000
+      });
+      if (scenario === 'old draft') {
+        const draft = JSON.parse(storage.get('blog-editor-draft')!);
+        delete draft.savedPublishedAt;
+        storage.set('blog-editor-draft', JSON.stringify(draft));
+      }
+      await unmount(editor);
+      document.body.replaceChildren();
+      startEditor();
+    }
+    button('Update Post').click();
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Post updated successfully!')
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0].replace).not.toHaveProperty('published');
+    expect([...backend.getAllFiles().keys()]).toEqual([path]);
+    expect(matter(await backend.readFile(path)).data.date).toBe('2025-12-19');
+    expect(matter(await backend.readFile(path)).content.trim()).toBe('Edited body');
+  }
+);
+
+test.each(['2025-12-19T00:00:00.000Z', '2026-11-01T09:30:00.000Z'])(
+  'preserves an unchanged exact publication instant: %s',
+  async (date) => {
+    memoryStorage();
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (url === '/api/posts')
+        return Response.json([
+          { path: 'src/content/blog/2025-12-18-exact.md', slug: 'exact', date: '2025-12-18' }
+        ]);
+      if (url.startsWith('/api/posts/read?'))
+        return Response.json({
+          content: 'Body',
+          frontmatter: { title: 'Exact', slug: 'exact', date }
+        });
+      requests.push(JSON.parse(init!.body as string));
+      return new Response(null, { status: 204 });
+    });
+    startEditor();
+    await vi.waitFor(() => expect(document.querySelector('aside')?.textContent).toContain('exact'));
+    [...document.querySelectorAll<HTMLButtonElement>('aside button')]
+      .find((item) => item.textContent?.includes('exact'))!
+      .click();
+    await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
+    fill('#content', 'Edited');
+    button('Update Post').click();
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0].replace).not.toHaveProperty('published');
+  }
+);

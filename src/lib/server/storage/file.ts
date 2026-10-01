@@ -102,6 +102,16 @@ export class FileStorageBackend implements StorageBackend {
     }
   }
 
+  async listFiles(directory: string): Promise<string[]> {
+    try {
+      const entries = await readdir(this.resolvePath(directory), { withFileTypes: true });
+      return entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+    } catch (error: unknown) {
+      if (hasErrorCode(error) && error.code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
   async listBlogPosts(): Promise<BlogPostFileInfo[]> {
     const blogDir = this.resolvePath('src/content/blog');
 

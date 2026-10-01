@@ -74,7 +74,16 @@ export async function mutatePost(
   request: Record<string, unknown>
 ): Promise<string | undefined> {
   if (request.action === 'undelete') {
-    const { day, slug } = postLocation(request.url);
+    const { day: requestedDay, slug } = postLocation(request.url);
+    let day = requestedDay;
+    if (!day) {
+      const days = (await backend.listFiles('.micropub/deleted')).flatMap((name) => {
+        const match = name.match(/^(\d{4}-\d{2}-\d{2})-(.+)\.json$/);
+        return match?.[2] === slug ? [match[1]] : [];
+      });
+      if (days.length > 1) invalid('Ambiguous post URL');
+      day = days[0];
+    }
     const archive = day && archivePath(day, slug);
     if (!archive || !(await backend.fileExists(archive))) error(404, 'Deleted post not found');
     const saved = JSON.parse(await backend.readFile(archive)) as { path: string; content: string };

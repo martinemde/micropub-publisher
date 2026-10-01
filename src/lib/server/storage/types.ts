@@ -65,6 +65,9 @@ export interface StorageBackend {
    */
   readFile(path: string): Promise<string>;
 
+  /** List immediate file names in a directory, or [] if it does not exist. */
+  listFiles(directory: string): Promise<string[]>;
+
   /**
    * List all blog post files
    *
