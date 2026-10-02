@@ -11,6 +11,9 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
   const password = 'cloudflare-test-session-secret-not-real-123456';
   let exchanges = 0;
   const unexpected = [];
+  const image = Buffer.alloc(214028, 42);
+  let uploadedImagePath;
+  let rejectUpload = false;
   const options = {
     name: 'micropub-publisher',
     modules: true,
@@ -65,6 +68,24 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
           return Response.json({ id: 1, login: 'tester', name: 'Test User' });
         if (url.pathname === '/repos/tester/blog')
           return Response.json({ owner: { login: 'tester' } });
+        const imagePath = decodeURIComponent(url.pathname);
+        if (
+          /^\/repos\/tester\/blog\/contents\/static\/images\/blog\/[\w-]+\.png$/.test(imagePath)
+        ) {
+          if (request.method === 'GET')
+            return Response.json({ message: 'Not Found' }, { status: 404 });
+          if (request.method === 'PUT') {
+            if (rejectUpload)
+              return Response.json(
+                { message: 'Resource not accessible by integration' },
+                { status: 403 }
+              );
+            const body = await request.json();
+            expect(Buffer.from(body.content, 'base64')).toEqual(image);
+            uploadedImagePath = imagePath;
+            return Response.json({ content: { path: imagePath } }, { status: 201 });
+          }
+        }
         if (decodeURIComponent(url.pathname) === '/repos/tester/blog/contents/src/content/blog')
           return Response.json([]);
         if (
@@ -162,6 +183,38 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
       });
     expect((await config()).status).toBe(200);
     expect((await exchange()).status).toBe(400);
+
+    const media = new FormData();
+    media.set(
+      'file',
+      new Blob([image], { type: 'image/png' }),
+      'Screenshot 2026-09-28 at 7.52.59 PM.png'
+    );
+    const mediaRequest = new Request(`${origin}/micropub/media`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${access_token}` },
+      body: media
+    });
+    const mediaBody = await mediaRequest.arrayBuffer();
+    const upload = await worker.dispatchFetch(mediaRequest.url, {
+      method: mediaRequest.method,
+      headers: Object.fromEntries(mediaRequest.headers),
+      body: mediaBody
+    });
+    expect(upload.status, await upload.text()).toBe(201);
+    expect(uploadedImagePath).toBeTruthy();
+    expect(upload.headers.get('location')).toBe(
+      `https://blog.example${uploadedImagePath.replace('/repos/tester/blog/contents/static', '')}`
+    );
+
+    rejectUpload = true;
+    const rejectedUpload = await worker.dispatchFetch(mediaRequest.url, {
+      method: mediaRequest.method,
+      headers: Object.fromEntries(mediaRequest.headers),
+      body: mediaBody
+    });
+    expect(rejectedUpload.status).toBe(500);
+    expect(await rejectedUpload.json()).toEqual({ message: 'Failed to upload image' });
 
     expect(
       (

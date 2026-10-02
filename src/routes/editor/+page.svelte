@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy, tick } from 'svelte';
   import remarkHtml from 'remark-html';
   import remarkParse from 'remark-parse';
   import type { PageData } from './$types';
@@ -142,6 +143,28 @@
   let error = $state('');
   let success = $state('');
   let uploadingImage = $state(false);
+  let contentField: HTMLTextAreaElement | undefined = $state();
+  let localImages = $state<Record<string, string>>({});
+  const markdown = unified().use(remarkParse).use(remarkHtml);
+  type MarkdownNode = ReturnType<typeof markdown.parse>;
+  function contentImages(text: string): Photo[] {
+    const tree = markdown.parse(text);
+    const images: Photo[] = [];
+    function visit(node: MarkdownNode | (typeof tree.children)[number]) {
+      if (node.type === 'image' && /^https?:\/\//.test(node.url))
+        images.push({ value: node.url, alt: node.alt ?? '' });
+      if ('children' in node) node.children.forEach(visit);
+    }
+    visit(tree);
+    return images;
+  }
+  const inlineImages = $derived(contentImages(content));
+  function imageSource(url: string) {
+    return localImages[url] ?? url;
+  }
+  onDestroy(() => {
+    Object.values(localImages).forEach((url) => URL.revokeObjectURL(url));
+  });
 
   // Auto-save state
   let saveStatus: 'idle' | 'saving' | 'saved' = $state('idle');
@@ -287,6 +310,7 @@
   }
 
   function newPost() {
+    if (submitting || uploadingImage) return;
     if (hasUnsavedChanges() && !confirm('Discard unsubmitted changes and start a new post?'))
       return;
     delete drafts[postType];
@@ -560,43 +584,69 @@
 
   async function handleImageUpload(e: Event) {
     const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
+    await uploadImages(Array.from(input.files ?? []), postType === 'photo');
+    input.value = '';
+  }
 
-    if (!file) return;
+  function handleImageDragOver(e: DragEvent) {
+    if (e.dataTransfer?.types.includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = uploadingImage || submitting ? 'none' : 'copy';
+    }
+  }
 
+  async function handleImageDrop(e: DragEvent) {
+    if (!e.dataTransfer?.files.length) return;
+    e.preventDefault();
+    await uploadImages(Array.from(e.dataTransfer.files), false);
+  }
+
+  async function uploadImages(files: File[], asPhotos: boolean) {
+    if (!files.length || uploadingImage || submitting) return;
+    if (files.some((file) => !/^image\/(jpeg|png|gif|webp|avif)$/.test(file.type))) {
+      error = 'Choose a PNG, JPEG, GIF, WebP, or AVIF image.';
+      return;
+    }
     uploadingImage = true;
     error = '';
-
+    let start = contentField?.selectionStart ?? content.length;
+    let end = contentField?.selectionEnd ?? start;
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await loggedFetch('/micropub/media', {
-        method: 'POST',
-        body: formData
-      });
-
-      if (response.ok) {
+      for (const [index, file] of files.entries()) {
+        const beforeUpload = content;
+        const formData = new FormData();
+        formData.append('file', file);
+        const response = await loggedFetch('/micropub/media', { method: 'POST', body: formData });
+        if (!response.ok) throw new Error(await response.text());
         const imageUrl = response.headers.get('Location');
-        if (imageUrl) {
-          // Insert markdown image syntax at cursor or end
-          if (postType === 'photo') {
-            photos.push({ value: imageUrl, alt: '' });
-          } else {
-            const imageMd = `![${file.name}](${imageUrl})`;
-            content = content ? `${content}\n\n${imageMd}` : imageMd;
-          }
+        if (!imageUrl || !/^https?:\/\//.test(imageUrl))
+          throw new Error('The media endpoint did not return an image URL.');
+        if (typeof URL.createObjectURL === 'function') {
+          if (localImages[imageUrl]) URL.revokeObjectURL(localImages[imageUrl]);
+          localImages[imageUrl] = URL.createObjectURL(file);
         }
-      } else {
-        const errorText = await response.text();
-        error = `Failed to upload image: ${errorText}`;
+        if (asPhotos) {
+          photos.push({ value: imageUrl, alt: '' });
+        } else {
+          // If the draft changed during upload, use its current caret and keep the edits.
+          if (content !== beforeUpload) {
+            start = contentField?.selectionStart ?? content.length;
+            end = contentField?.selectionEnd ?? start;
+          }
+          const alt = file.name.replace(/[\\[\]]/g, '\\$&');
+          const imageMd = `${index ? '\n\n' : ''}![${alt}](${imageUrl})`;
+          content = content.slice(0, start) + imageMd + content.slice(end);
+          start += imageMd.length;
+          end = start;
+          await tick();
+          contentField?.focus();
+          contentField?.setSelectionRange(start, end);
+        }
       }
     } catch (err) {
-      error = `Error uploading image: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      error = `Failed to upload image: ${err instanceof Error ? err.message : 'Unknown error'}`;
     } finally {
       uploadingImage = false;
-      // Reset input
-      input.value = '';
     }
   }
 
@@ -610,8 +660,14 @@
 
     try {
       // Render markdown directly in the browser
-      const result = await unified().use(remarkParse).use(remarkHtml).process(content);
-      previewHtml = String(result);
+      const result = await markdown.process(content);
+      // Use the uploaded bytes until the blog deploy makes the public URL available.
+      const template = document.createElement('template');
+      template.innerHTML = String(result);
+      template.content.querySelectorAll('img').forEach((image) => {
+        image.src = imageSource(image.getAttribute('src') ?? '');
+      });
+      previewHtml = template.innerHTML;
     } catch {
       previewHtml = '<p class="text-error-500">Error rendering preview</p>';
     } finally {
@@ -636,8 +692,9 @@
     <input
       type="file"
       accept="image/*"
+      multiple
       onchange={handleImageUpload}
-      disabled={uploadingImage}
+      disabled={uploadingImage || submitting}
       class="hidden"
     />
   </label>
@@ -781,6 +838,13 @@
             </p>
             {#each photos as photo, i (photo)}
               <div class="space-y-2">
+                {#if /^https?:\/\//.test(photo.value)}
+                  <img
+                    src={imageSource(photo.value)}
+                    alt={photo.alt}
+                    class="max-h-48 rounded object-contain"
+                  />
+                {/if}
                 <label for={`photo-${i}`} class="block text-sm">Image URL {i + 1}</label>
                 <input
                   id={`photo-${i}`}
@@ -863,16 +927,41 @@
           {#if activeTab === 'edit'}
             <textarea
               id="content"
+              bind:this={contentField}
               bind:value={content}
+              ondragover={handleImageDragOver}
+              ondrop={handleImageDrop}
               required={postType === 'article' || postType === 'note'}
               rows={postType === 'article' ? 20 : 6}
               class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 font-mono text-sm text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
             ></textarea>
+            <p class="mt-1 text-sm text-surface-600-400">
+              {uploadingImage
+                ? 'Uploading images…'
+                : 'Drop images here to insert them into your text.'}
+            </p>
+            {#if inlineImages.length}
+              <section aria-label="Content images" class="mt-3 flex flex-wrap gap-3">
+                {#each inlineImages as image, i (i)}
+                  <figure class="max-w-40">
+                    <img
+                      src={imageSource(image.value)}
+                      alt={image.alt}
+                      class="h-24 w-40 rounded object-contain"
+                    />
+                    <figcaption class="mt-1 truncate text-xs text-surface-600-400">
+                      {image.alt || 'Image'}
+                    </figcaption>
+                  </figure>
+                {/each}
+              </section>
+            {/if}
           {/if}
 
           <!-- Preview mode -->
           {#if activeTab === 'preview'}
             <div
+              aria-label="Post preview"
               class="prose prose-sm min-h-125 w-full rounded-lg border border-surface-200-800 bg-surface-50-950 p-4 dark:prose-invert"
             >
               {#if title && (postType === 'article' || postType === 'bookmark')}
@@ -887,7 +976,7 @@
                 {#each photos as photo (photo)}
                   {#if /^https?:\/\//.test(photo.value)}
                     <img
-                      src={photo.value}
+                      src={imageSource(photo.value)}
                       alt={photo.alt}
                       class="max-h-96 rounded object-contain"
                     />
