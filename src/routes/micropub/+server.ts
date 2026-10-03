@@ -1,4 +1,4 @@
-import { error, json } from '@sveltejs/kit';
+import { error, isHttpError, json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/public';
 import {
   parseMicropubRequest,
@@ -203,10 +203,9 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
     });
   } catch (err) {
     // Re-throw SvelteKit HttpErrors (auth failures, content type errors, etc.)
-    if (err && typeof err === 'object' && 'status' in err) {
-      throw err;
-    }
-    console.error('Micropub POST error:');
-    error(500, 'Failed to create post');
+    if (isHttpError(err)) throw err;
+    const detail = err instanceof Error ? err.message : 'Unknown error';
+    console.error('Micropub POST error:', detail);
+    error(500, `Failed to create post: ${detail}`);
   }
 };

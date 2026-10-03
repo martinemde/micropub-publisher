@@ -96,9 +96,8 @@ export class GitHubStorageBackend implements StorageBackend {
     } catch (error: unknown) {
       if (isHttpError(error)) throw error;
       // Enhance error message with context
-      const action = hasHttpStatus(error) && error.status === 404 ? 'create' : 'update';
       const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to ${action} file in GitHub: ${message}`, {
+      throw new Error(`Failed to write file in GitHub: ${message}`, {
         cause: error
       });
     }

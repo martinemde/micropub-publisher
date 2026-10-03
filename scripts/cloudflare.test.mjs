@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { sealData, unsealData } from 'iron-session';
+import matter from 'gray-matter';
 
 test('Worker authentication, refresh, replay protection, and logout survive restarts', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'publisher-worker-'));
@@ -14,6 +15,8 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
   const image = Buffer.alloc(214028, 42);
   let uploadedImagePath;
   let rejectUpload = false;
+  let postFailure;
+  let createdPost;
   const options = {
     name: 'micropub-publisher',
     modules: true,
@@ -86,8 +89,34 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
             return Response.json({ content: { path: imagePath } }, { status: 201 });
           }
         }
-        if (decodeURIComponent(url.pathname) === '/repos/tester/blog/contents/src/content/blog')
+        if (decodeURIComponent(url.pathname) === '/repos/tester/blog/contents/src/content/blog') {
+          if (postFailure === 'list')
+            return Response.json({ message: 'API rate limit exceeded' }, { status: 403 });
           return Response.json([]);
+        }
+        if (
+          decodeURIComponent(url.pathname) ===
+          '/repos/tester/blog/contents/.micropub/deleted/2026-10-03-diagnostic-post.json'
+        )
+          return Response.json({ message: 'Not Found' }, { status: 404 });
+        if (
+          /^\/repos\/tester\/blog\/contents\/src\/content\/blog\/2026-10-03-diagnostic-post\.md$/.test(
+            decodeURIComponent(url.pathname)
+          )
+        ) {
+          if (request.method === 'GET')
+            return Response.json({ message: 'Not Found' }, { status: 404 });
+          if (request.method === 'PUT') {
+            if (postFailure === 'write')
+              return Response.json(
+                { message: 'Resource not accessible by integration' },
+                { status: 403 }
+              );
+            const body = await request.json();
+            createdPost = Buffer.from(body.content, 'base64').toString('utf-8');
+            return Response.json({ content: { path: url.pathname } }, { status: 201 });
+          }
+        }
         if (
           decodeURIComponent(url.pathname) ===
           '/repos/tester/blog/contents/src/content/blog/existing.md'
@@ -183,6 +212,53 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
       });
     expect((await config()).status).toBe(200);
     expect((await exchange()).status).toBe(400);
+
+    const createPost = () =>
+      worker.dispatchFetch(`${origin}/micropub`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${access_token}`
+        },
+        body: JSON.stringify({
+          type: ['h-entry'],
+          properties: {
+            content: ['A diagnostic post'],
+            'mp-slug': ['diagnostic-post'],
+            published: ['2026-10-03T20:00:00Z']
+          }
+        })
+      });
+    for (const [failure, detail] of [
+      ['list', 'Failed to list blog posts from GitHub: API rate limit exceeded'],
+      ['write', 'Failed to write file in GitHub: Resource not accessible by integration']
+    ]) {
+      postFailure = failure;
+      const rejected = await createPost();
+      expect(rejected.status).toBe(500);
+      expect(await rejected.json()).toEqual({ message: `Failed to create post: ${detail}` });
+      expect(createdPost).toBeUndefined();
+    }
+    postFailure = undefined;
+    const created = await createPost();
+    expect(created.status, await created.text()).toBe(201);
+    expect(created.headers.get('location')).toBe('https://blog.example/2026/10/03/diagnostic-post');
+    const savedPost = matter(createdPost);
+    expect(savedPost.content).toBe('A diagnostic post\n');
+    expect(savedPost.data).toEqual({
+      date: '2026-10-03T20:00:00Z',
+      author: 'tester',
+      published: true,
+      slug: 'diagnostic-post',
+      micropub: {
+        type: ['h-entry'],
+        properties: {
+          content: ['A diagnostic post'],
+          'mp-slug': ['diagnostic-post'],
+          published: ['2026-10-03T20:00:00Z']
+        }
+      }
+    });
 
     const media = new FormData();
     media.set(
