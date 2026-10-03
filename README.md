@@ -102,6 +102,12 @@ isolated in-memory stores. Cloudflare requests fail closed without durable state
 domain; Wrangler manages the Worker, assets, Durable Object migration, and secrets.
 Worker preview URLs and request logging are disabled.
 
+The production Worker name is `publish`, matching the custom domain's service in
+`../cloudflare/workers.tf`. Keep Wrangler's `name` aligned with that service.
+Deploying as the former `micropub-publisher` name can try to recreate its existing
+Durable Object namespace and fail with Cloudflare error 10065. Correct the Worker
+name, then rerun `pnpm run deploy`; do not rename or delete the stored class.
+
 Keep production secrets in ignored `.env.production.local`, separate from dev's
 `.env.local`. It must contain `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and a
 fresh random `SESSION_SECRET` of at least 32 characters. Use the production GitHub

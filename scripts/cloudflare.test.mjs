@@ -18,7 +18,7 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
   let postFailure;
   let createdPost;
   const options = {
-    name: 'micropub-publisher',
+    name: 'publish',
     modules: true,
     scriptPath: resolve('.wrangler/dry-run/_worker.js'),
     compatibilityDate: '2026-09-20',

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "micropub-publisher",
+  "name": "publish",
   "account_id": "9c275e0c035e53370143e8cf240dfb3f",
   "main": ".svelte-kit/cloudflare/_worker.js",
   "compatibility_date": "2026-09-20",
