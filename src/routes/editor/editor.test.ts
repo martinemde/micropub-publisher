@@ -91,7 +91,9 @@ test.each([
       label.textContent?.includes('Published')
     );
     expect(published?.querySelector('input')?.checked).toBe(true);
-    expect(document.querySelector('textarea')?.value).toBe(original ?? content);
+    expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe(
+      original ?? content
+    );
     expect(document.querySelector('main')?.textContent).not.toContain('Failed to load post');
   }
 );
@@ -145,6 +147,14 @@ test.each(['unchanged', 'edited', 'now', 'new'])(
         expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('first')
       );
     } else {
+      // The latest post opens automatically; start a new one instead.
+      await vi.waitFor(() =>
+        expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('first')
+      );
+      [...document.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.trim() === 'New post')!
+        .click();
+      flushSync();
       for (const [selector, value] of [
         ['#title', 'first'],
         ['#content', 'Body']
@@ -952,3 +962,143 @@ test.each(['2025-12-19T00:00:00.000Z', '2026-11-01T09:30:00.000Z'])(
     expect(requests[0].replace).not.toHaveProperty('published');
   }
 );
+
+test.each(['no draft', 'local draft', 'typing first'])(
+  'opens the latest post unless the writer already has work: %s',
+  async (scenario) => {
+    const storage = memoryStorage();
+    if (scenario === 'local draft') {
+      storage.set(
+        'blog-editor-draft',
+        JSON.stringify({
+          postType: 'note',
+          title: '',
+          content: 'A local note',
+          slug: '',
+          categories: '',
+          published: false,
+          autoSlug: true,
+          savedAt: new Date().toISOString(),
+          currentPath: ''
+        })
+      );
+    }
+    let finishList!: () => void;
+    const listed = new Promise<void>((resolve) => (finishList = resolve));
+    const reads: string[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url === '/api/posts') {
+        await listed;
+        return Response.json(
+          ['2026-10-04-latest', '2026-09-30-older'].map((name) => ({
+            filename: `${name}.md`,
+            path: `src/content/blog/${name}.md`,
+            slug: name.slice(11),
+            date: name.slice(0, 10)
+          }))
+        );
+      }
+      reads.push(url);
+      return Response.json({
+        content: 'Body of the latest post',
+        frontmatter: { title: 'Latest', slug: 'latest', date: '2026-10-04T12:00:00Z' }
+      });
+    });
+    startEditor();
+    if (scenario === 'typing first') fill('#content', 'Started before the list');
+    finishList();
+    await vi.waitFor(() => expect(document.querySelector('aside')?.textContent).toContain('older'));
+    if (scenario === 'no draft') {
+      await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
+      expect(reads).toEqual(['/api/posts/read?path=src%2Fcontent%2Fblog%2F2026-10-04-latest.md']);
+      expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('Latest');
+      expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe(
+        'Body of the latest post'
+      );
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(reads).toEqual([]);
+      expect(button('Create Post')).toBeDefined();
+      expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe(
+        scenario === 'local draft' ? 'A local note' : 'Started before the list'
+      );
+    }
+  }
+);
+
+test('opens posts from the menu drawer and closes it after a choice or Escape', async () => {
+  memoryStorage();
+  vi.stubGlobal('fetch', async (url: string) =>
+    url === '/api/posts'
+      ? Response.json([
+          { path: 'src/content/blog/2026-10-04-latest.md', slug: 'latest', date: '2026-10-04' },
+          { path: 'src/content/blog/2026-09-30-older.md', slug: 'older', date: '2026-09-30' }
+        ])
+      : Response.json({
+          content: 'A body',
+          frontmatter: { title: url.includes('older') ? 'Older' : 'Latest' }
+        })
+  );
+  startEditor();
+  await vi.waitFor(() =>
+    expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('Latest')
+  );
+  const menu = document.querySelector<HTMLButtonElement>('[aria-controls="post-drawer"]')!;
+  const drawer = document.querySelector('aside')!;
+  expect(menu.getAttribute('aria-expanded')).toBe('false');
+  expect(drawer.inert).toBe(true);
+
+  menu.click();
+  flushSync();
+  expect(menu.getAttribute('aria-expanded')).toBe('true');
+  expect(drawer.inert).toBe(false);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  flushSync();
+  expect(menu.getAttribute('aria-expanded')).toBe('false');
+
+  menu.click();
+  flushSync();
+  [...drawer.querySelectorAll('button')]
+    .find((item) => item.textContent?.includes('older'))!
+    .click();
+  flushSync();
+  expect(menu.getAttribute('aria-expanded')).toBe('false');
+  await vi.waitFor(() =>
+    expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('Older')
+  );
+});
+
+test('switches between editing and preview with Ctrl or Command E', async () => {
+  memoryStorage();
+  vi.stubGlobal('fetch', async () => Response.json([]));
+  startEditor();
+  fill('#content', '# Heading');
+  const toggle = (init: KeyboardEventInit) => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', cancelable: true, ...init }));
+    flushSync();
+  };
+  toggle({ ctrlKey: true });
+  await vi.waitFor(() =>
+    expect(document.querySelector('[aria-label="Post preview"] h1')?.textContent).toBe('Heading')
+  );
+  expect(document.querySelector('#content')).toBeNull();
+  expect(button('Preview').getAttribute('aria-pressed')).toBe('true');
+  toggle({ metaKey: true });
+  await vi.waitFor(() => expect(document.activeElement?.id).toBe('content'));
+  toggle({ ctrlKey: true, shiftKey: true });
+  expect(document.querySelector('#content')).not.toBeNull();
+});
+
+test('opens collapsed post details when one of their fields is invalid', async () => {
+  memoryStorage();
+  vi.stubGlobal('fetch', async () => Response.json([]));
+  startEditor();
+  fill('#title', 'Title');
+  fill('#content', 'Body');
+  const details = document.querySelector<HTMLElement>('#post-details')!;
+  expect(details.hidden).toBe(true);
+  fill('#featured', 'not a url');
+  expect(document.querySelector('form')!.checkValidity()).toBe(false);
+  flushSync();
+  expect(details.hidden).toBe(false);
+});
