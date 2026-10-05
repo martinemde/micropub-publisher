@@ -3,7 +3,7 @@
   import remarkHtml from 'remark-html';
   import remarkParse from 'remark-parse';
   import type { PageData } from './$types';
-  import { Upload, Save } from 'lucide-svelte';
+  import { ImagePlus, Menu, X, Plus, Eye, PenLine, ChevronDown, LogOut } from 'lucide-svelte';
   import { resolve } from '$app/paths';
   import { unified } from 'unified';
   import { browser } from '$app/environment';
@@ -170,6 +170,17 @@
   let saveStatus: 'idle' | 'saving' | 'saved' = $state('idle');
   let lastSaved = $state<Date | null>(null);
 
+  // Layout state
+  let drawerOpen = $state(false);
+  let detailsOpen = $state(false);
+  let detailsSection: HTMLDivElement | undefined = $state();
+  let menuButton: HTMLButtonElement | undefined = $state();
+  let titleField: HTMLTextAreaElement | undefined = $state();
+  let drawerStart: HTMLButtonElement | undefined = $state();
+  let opening = $state(false);
+  let listLoaded = false;
+  let viewportWidth = $state(0);
+
   // Preview state
   let activeTab: 'edit' | 'preview' = $state('edit');
   let previewHtml = $state('');
@@ -317,6 +328,7 @@
     restoreComposer(postType);
     savedPost = JSON.stringify(postState());
     clearDraft();
+    closeDrawer();
   }
 
   function formatRelativeTime(date: Date): string {
@@ -342,8 +354,9 @@
     return JSON.stringify(postState()) !== savedPost;
   }
 
-  // Load a blog post from the API
-  async function loadPost(path: string) {
+  // Load a blog post from the API. The automatic open of the latest post
+  // yields to anything the writer started while the list was loading.
+  async function loadPost(path: string, onlyIfPristine = false) {
     if (!path) {
       // Load draft from localStorage (already loaded on mount)
       return;
@@ -358,6 +371,7 @@
       }
 
       const { frontmatter, content: postContent } = await response.json();
+      if (onlyIfPristine && (currentPath || hasUnsavedChanges())) return;
 
       // Populate form
       const source = frontmatter.micropub?.properties;
@@ -404,8 +418,9 @@
   // Handle selecting a post from the list
   async function handleSelectPost(path: string, isDraft: boolean) {
     if (submitting || uploadingImage) return;
-    // If selecting draft, just reload from localStorage (already loaded)
-    if (isDraft) {
+    // The draft and an unchanged open post are already in the editor.
+    if (isDraft || (path === currentPath && !hasUnsavedChanges())) {
+      closeDrawer();
       return;
     }
 
@@ -419,7 +434,104 @@
       }
     }
 
+    closeDrawer();
     await loadPost(path);
+  }
+
+  // Most sessions continue the latest post, so open it unless a local draft exists.
+  function handlePostsLoaded(posts: { path: string }[]) {
+    if (listLoaded) return;
+    listLoaded = true;
+    const latest = posts[0];
+    if (!latest || currentPath || lastSaved || hasUnsavedChanges()) return;
+    opening = true;
+    loadPost(latest.path, true).finally(() => (opening = false));
+  }
+
+  function openDrawer() {
+    drawerOpen = true;
+    tick().then(() => drawerStart?.focus());
+  }
+
+  function closeDrawer() {
+    if (!drawerOpen) return;
+    drawerOpen = false;
+    menuButton?.focus();
+  }
+
+  async function togglePreview() {
+    activeTab = activeTab === 'edit' ? 'preview' : 'edit';
+    if (activeTab === 'edit') {
+      await tick();
+      contentField?.focus();
+    }
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && drawerOpen) {
+      e.preventDefault();
+      closeDrawer();
+    } else if (
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      !e.shiftKey &&
+      e.key.toLowerCase() === 'e'
+    ) {
+      e.preventDefault();
+      togglePreview();
+    }
+  }
+
+  // Reveal collapsed metadata fields when the browser rejects one of them.
+  function handleInvalid(e: Event) {
+    if (detailsSection?.contains(e.target as Node)) detailsOpen = true;
+  }
+
+  // Grow the title and editor with their text so the page, not a field, scrolls.
+  function fitHeight(field: HTMLTextAreaElement | undefined) {
+    if (!field) return;
+    const scroll = window.scrollY;
+    field.style.height = 'auto';
+    field.style.height = `${field.scrollHeight}px`;
+    if (window.scrollY !== scroll) window.scrollTo(0, scroll);
+  }
+  $effect(() => {
+    void [content, activeTab, postType, viewportWidth];
+    fitHeight(contentField);
+  });
+  $effect(() => {
+    void [title, postType, viewportWidth];
+    fitHeight(titleField);
+  });
+
+  function formatPublishedAt(value: string): string {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? 'No date'
+      : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  const detailsSummary = $derived(
+    [
+      formatPublishedAt(publishedAt),
+      slug ? `/${slug}` : 'slug from title',
+      categories.trim() || null,
+      visibility && visibility !== 'public' ? visibility : null,
+      summary ? 'summary' : null
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  );
+
+  function editorStatus(): string {
+    if (opening) return 'Opening latest post…';
+    if (submitting) return currentPath ? 'Updating on the blog…' : 'Creating on the blog…';
+    if (uploadingImage) return 'Uploading image…';
+    if (hasUnsavedChanges()) {
+      if (saveStatus === 'saving') return 'Backing up…';
+      return lastSaved ? `Unsaved · backed up ${formatRelativeTime(lastSaved)}` : 'Unsaved changes';
+    }
+    return currentPath ? 'Saved to the blog' : 'New post';
   }
 
   // Auto-save when form fields change (debounced 1 second)
@@ -683,12 +795,15 @@
   });
 </script>
 
-{#snippet imageUpload()}
+{#snippet imageUpload(label: string)}
   <label
-    class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1 text-sm text-surface-700-300 hover:bg-surface-100-900"
+    class="inline-flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-surface-700-300 hover:bg-surface-100-900 has-disabled:cursor-not-allowed has-disabled:opacity-50"
+    title="Upload images (or drop them into the editor)"
   >
-    <Upload class="h-4 w-4" />
-    {uploadingImage ? 'Uploading...' : 'Upload Image'}
+    <ImagePlus class="size-4" aria-hidden="true" />
+    <span class={label === 'icon' ? 'sr-only' : ''}
+      >{uploadingImage ? 'Uploading...' : 'Upload Image'}</span
+    >
     <input
       type="file"
       accept="image/*"
@@ -704,327 +819,347 @@
   <title>Publisher - Martin Emde</title>
 </svelte:head>
 
-<div class="mx-auto max-w-7xl px-4 py-6">
-  <!-- Header -->
-  <div class="mb-6 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <h1 class="text-surface-900-50 text-2xl font-bold">Publisher</h1>
-      {#if saveStatus === 'saving'}
-        <span class="flex items-center gap-1.5 text-sm text-surface-600-400">
-          <Save class="h-3.5 w-3.5 animate-pulse" />
-          Saving...
-        </span>
-      {:else if saveStatus === 'saved' && lastSaved}
-        <span class="flex items-center gap-1.5 text-sm text-surface-600-400">
-          <Save class="h-3.5 w-3.5" />
-          Saved {formatRelativeTime(lastSaved)}
-        </span>
-      {/if}
+<svelte:window onkeydown={handleKeydown} bind:innerWidth={viewportWidth} />
+
+{#if data.isAuthenticated}
+  <!-- Pointer convenience; Escape and the close button handle keyboard users. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-30 bg-surface-950/40 transition-opacity {drawerOpen
+      ? 'opacity-100'
+      : 'pointer-events-none opacity-0'}"
+    onclick={closeDrawer}
+  ></div>
+  <aside
+    id="post-drawer"
+    aria-label="Posts"
+    inert={!drawerOpen}
+    class="fixed inset-y-0 left-0 z-40 flex w-80 max-w-[85vw] flex-col border-r border-surface-200-800 bg-surface-50-950 shadow-xl transition-transform duration-200 {drawerOpen
+      ? 'translate-x-0'
+      : '-translate-x-full'}"
+  >
+    <div class="flex h-14 shrink-0 items-center justify-between gap-2 px-4">
+      <span class="font-semibold">Publisher</span>
+      <button
+        type="button"
+        onclick={closeDrawer}
+        aria-label="Close posts"
+        class="rounded-lg p-2 hover:bg-surface-100-900"
+      >
+        <X class="size-5" aria-hidden="true" />
+      </button>
     </div>
-    <div class="flex items-center gap-4">
-      {#if data.isAuthenticated && data.user}
-        <div class="hidden items-center gap-3 sm:flex">
-          <img
-            src={data.user.avatar_url}
-            alt={data.user.name || data.user.login}
-            class="size-8 rounded-full"
-          />
-          <span class="text-sm text-surface-700-300">
-            {data.user.name || data.user.login}
-          </span>
-        </div>
+    <div class="px-3 pb-3">
+      <button
+        type="button"
+        bind:this={drawerStart}
+        onclick={newPost}
+        disabled={submitting || uploadingImage}
+        class="flex w-full items-center gap-2 rounded-lg bg-primary-500 px-3 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+      >
+        <Plus class="size-4" aria-hidden="true" />
+        New post
+      </button>
+    </div>
+    <div class="min-h-0 flex-1 border-t border-surface-200-800 px-3 pt-3">
+      <BlogPostList
+        onSelectPost={handleSelectPost}
+        onLoad={handlePostsLoaded}
+        {currentPath}
+        hasDraft={lastSaved !== null}
+        request={loggedFetch}
+      />
+    </div>
+    {#if data.user}
+      <div class="flex items-center gap-3 border-t border-surface-200-800 px-4 py-3">
+        {#if data.user.avatar_url}
+          <img src={data.user.avatar_url} alt="" class="size-7 rounded-full" />
+        {/if}
+        <span class="min-w-0 flex-1 truncate text-sm text-surface-700-300">
+          {data.user.name || data.user.login}
+        </span>
         <a
           data-sveltekit-reload
           href={resolve('/auth/github/logout')}
-          class="rounded-lg border border-surface-200-800 px-4 py-2 text-sm hover:bg-surface-100-900"
+          class="flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-surface-600-400 hover:bg-surface-100-900"
         >
+          <LogOut class="size-4" aria-hidden="true" />
           Logout
         </a>
-      {:else}
-        <a
-          data-sveltekit-reload
-          href={resolve('/auth/github/login')}
-          class="rounded-lg border border-primary-300-700 bg-primary-500 px-4 py-2 text-sm text-white hover:bg-primary-600"
-        >
-          Login with GitHub
-        </a>
-      {/if}
-    </div>
-  </div>
-
-  <!-- Mobile-first two-column layout -->
-  <div class="grid gap-6 {data.isAuthenticated ? 'lg:grid-cols-[320px_1fr]' : ''}">
-    <!-- Left sidebar: Post list (only when authenticated) -->
-    {#if data.isAuthenticated}
-      <aside
-        class="h-[400px] overflow-hidden rounded-lg border border-surface-200-800 bg-surface-50-950 p-4 lg:h-[calc(100vh-12rem)]"
-      >
-        <BlogPostList
-          onSelectPost={handleSelectPost}
-          {currentPath}
-          hasDraft={lastSaved !== null}
-          request={loggedFetch}
-        />
-      </aside>
+      </div>
     {/if}
+  </aside>
+{/if}
 
-    <!-- Right main content: Editor form -->
-    <main class="min-w-0">
-      {#if error}
-        <div class="text-error-900-50 mb-4 rounded-lg bg-error-50-950 p-4">
-          {error}
-        </div>
+<header
+  class="sticky top-0 z-20 flex h-14 items-center gap-1 border-b border-surface-200-800 bg-surface-50-950/90 px-2 backdrop-blur sm:gap-2 sm:px-3"
+>
+  {#if data.isAuthenticated}
+    <button
+      type="button"
+      bind:this={menuButton}
+      onclick={openDrawer}
+      aria-label="Posts"
+      aria-expanded={drawerOpen}
+      aria-controls="post-drawer"
+      class="rounded-lg p-2 hover:bg-surface-100-900"
+    >
+      <Menu class="size-5" aria-hidden="true" />
+    </button>
+  {/if}
+  <p class="min-w-0 flex-1 truncate px-1 text-sm text-surface-600-400" aria-live="polite">
+    {editorStatus()}
+  </p>
+  {#if postType !== 'photo' && activeTab === 'edit'}{@render imageUpload('icon')}{/if}
+  <div
+    class="flex rounded-lg border border-surface-200-800 p-0.5 text-sm"
+    role="group"
+    aria-label="View"
+  >
+    <button
+      type="button"
+      onclick={() => activeTab === 'preview' && togglePreview()}
+      aria-pressed={activeTab === 'edit'}
+      title="Edit (Ctrl/⌘ E)"
+      class="flex items-center gap-1.5 rounded-md px-2 py-1 {activeTab === 'edit'
+        ? 'bg-surface-200-800 text-surface-950-50'
+        : 'text-surface-600-400 hover:text-surface-950-50'}"
+    >
+      <PenLine class="size-4" aria-hidden="true" />
+      <span class="sr-only sm:not-sr-only">Edit</span>
+    </button>
+    <button
+      type="button"
+      onclick={() => activeTab === 'edit' && togglePreview()}
+      aria-pressed={activeTab === 'preview'}
+      title="Preview (Ctrl/⌘ E)"
+      class="flex items-center gap-1.5 rounded-md px-2 py-1 {activeTab === 'preview'
+        ? 'bg-surface-200-800 text-surface-950-50'
+        : 'text-surface-600-400 hover:text-surface-950-50'}"
+    >
+      <Eye class="size-4" aria-hidden="true" />
+      <span class="sr-only sm:not-sr-only">Preview</span>
+    </button>
+  </div>
+  {#if data.isAuthenticated}
+    <button
+      type="submit"
+      form="post-form"
+      disabled={submitting || uploadingImage || opening || (postType === 'photo' && !photos.length)}
+      class="rounded-lg bg-primary-500 px-3 py-1.5 text-sm font-medium whitespace-nowrap text-white hover:bg-primary-600 disabled:opacity-50 sm:px-4"
+    >
+      {#if submitting}
+        {currentPath ? 'Updating...' : 'Creating...'}
+      {:else}
+        {currentPath ? 'Update Post' : 'Create Post'}
       {/if}
+    </button>
+  {:else}
+    <a
+      data-sveltekit-reload
+      href={resolve('/auth/github/login')}
+      class="rounded-lg bg-primary-500 px-3 py-1.5 text-sm whitespace-nowrap text-white hover:bg-primary-600"
+    >
+      Login with GitHub
+    </a>
+  {/if}
+</header>
 
-      {#if success}
-        <div class="text-success-900-50 mb-4 rounded-lg bg-success-50-950 p-4">
-          {success}
-        </div>
-      {/if}
+<main class="mx-auto w-full max-w-3xl px-5 pt-6 pb-24 sm:px-8 sm:pt-10">
+  {#if error}
+    <div role="alert" class="text-error-900-50 mb-6 rounded-lg bg-error-50-950 px-4 py-3 text-sm">
+      {error}
+    </div>
+  {/if}
 
-      <nav aria-label="Post type" class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {#each postTypes as type (type.type)}
-          <button
-            type="button"
-            aria-pressed={postType === type.type}
-            disabled={!!currentPath || submitting || uploadingImage}
-            onclick={() => switchType(type.type)}
-            class="rounded-lg border p-3 text-left disabled:opacity-60 {postType === type.type
-              ? 'border-primary-500 bg-primary-50-950'
-              : 'border-surface-200-800'}"
-          >
-            <span class="font-semibold">{type.name}</span>
-          </button>
-        {/each}
-      </nav>
-      <div class="mb-6 flex items-center justify-between gap-4">
-        <p class="text-sm text-surface-600-400">
-          {postTypes.find((type) => type.type === postType)?.description}
-        </p>
+  {#if success}
+    <div
+      role="status"
+      class="text-success-900-50 mb-6 flex items-start justify-between gap-3 rounded-lg bg-success-50-950 px-4 py-3 text-sm"
+    >
+      <span class="min-w-0 break-words">{success}</span>
+      <button type="button" onclick={() => (success = '')} aria-label="Dismiss">
+        <X class="size-4" aria-hidden="true" />
+      </button>
+    </div>
+  {/if}
+
+  <form id="post-form" onsubmit={handleSubmit} oninvalidcapture={handleInvalid}>
+    <nav aria-label="Post type" class="mb-4 flex flex-wrap gap-1 text-sm">
+      {#each postTypes as type (type.type)}
         <button
           type="button"
-          onclick={newPost}
-          disabled={submitting || uploadingImage}
-          class="shrink-0 text-sm underline">New post</button
+          aria-pressed={postType === type.type}
+          disabled={!!currentPath || submitting || uploadingImage}
+          onclick={() => switchType(type.type)}
+          title={type.description}
+          class="rounded-full px-3 py-1 disabled:cursor-default disabled:opacity-100 {postType ===
+          type.type
+            ? 'bg-primary-500 text-white'
+            : currentPath
+              ? 'hidden'
+              : 'text-surface-600-400 hover:bg-surface-100-900'}"
         >
-      </div>
-      <form onsubmit={handleSubmit} class="space-y-6">
-        {#if postType === 'bookmark'}
+          {type.name}
+        </button>
+      {/each}
+    </nav>
+
+    {#if postType === 'bookmark'}
+      <label for="bookmark" class="sr-only">Bookmark URL</label>
+      <input
+        id="bookmark"
+        type="url"
+        required
+        pattern="https?://.*"
+        bind:value={bookmark}
+        placeholder="https://example.com/something-worth-keeping"
+        class="mb-3 w-full rounded-lg border border-surface-200-800 bg-surface-100-900 px-3 py-2 font-mono text-sm"
+      />
+    {/if}
+
+    {#if postType === 'article' || postType === 'bookmark'}
+      <label for="title" class="sr-only">
+        {postType === 'article' ? 'Title *' : 'Link title (optional)'}
+      </label>
+      <!-- A wrapping single-line title: Enter moves on to the body. -->
+      <textarea
+        id="title"
+        bind:this={titleField}
+        bind:value={title}
+        rows="1"
+        required={postType === 'article'}
+        placeholder={postType === 'article' ? 'Title' : 'Link title (optional)'}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            contentField?.focus();
+          }
+        }}
+        class:hidden={activeTab === 'preview'}
+        class="block w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-3xl leading-tight font-bold text-surface-950-50 placeholder:text-surface-400-600 focus:ring-0 sm:text-4xl"
+      ></textarea>
+    {/if}
+
+    <div
+      class="mt-3 flex flex-wrap items-start gap-x-4 gap-y-2 border-b border-surface-200-800 pb-3"
+    >
+      <label class="flex items-center gap-2 py-1 text-sm text-surface-700-300">
+        <input
+          type="checkbox"
+          bind:checked={published}
+          class="rounded border-surface-300-700 text-primary-500 focus:ring-2 focus:ring-primary-500"
+        />
+        Published
+      </label>
+      <button
+        type="button"
+        onclick={() => (detailsOpen = !detailsOpen)}
+        aria-expanded={detailsOpen}
+        aria-controls="post-details"
+        title="Post details"
+        class="flex min-w-0 flex-1 basis-60 items-center gap-1.5 rounded py-1 text-left text-sm text-surface-600-400 hover:text-surface-950-50"
+      >
+        <ChevronDown
+          class="size-4 shrink-0 transition-transform {detailsOpen ? 'rotate-180' : ''}"
+          aria-hidden="true"
+        />
+        <span class="sr-only">Post details:</span>
+        <span class="truncate">{detailsSummary}</span>
+      </button>
+      <div
+        id="post-details"
+        bind:this={detailsSection}
+        hidden={!detailsOpen}
+        role="group"
+        aria-label="Post details"
+        class="w-full"
+      >
+        <div class="mt-1 mb-2 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2 [&>*]:min-w-0">
           <div>
-            <label for="bookmark" class="mb-2 block text-sm font-medium">Bookmark URL</label>
-            <input
-              id="bookmark"
-              type="url"
-              required
-              pattern="https?://.*"
-              bind:value={bookmark}
-              placeholder="https://example.com/something-worth-keeping"
-              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-3"
-            />
-          </div>
-        {/if}
-        {#if postType === 'photo'}
-          <section
-            aria-label="Photos"
-            class="space-y-4 rounded-lg border border-surface-200-800 p-4"
-          >
-            <div class="flex items-center justify-between gap-4">
-              <h2 class="font-semibold">Photos</h2>
-              {@render imageUpload()}
-            </div>
-            <p class="text-sm text-surface-600-400">
-              Upload an image, or add an image URL. Alt text describes the image for people who
-              cannot see it.
-            </p>
-            {#each photos as photo, i (photo)}
-              <div class="space-y-2">
-                {#if /^https?:\/\//.test(photo.value)}
-                  <img
-                    src={imageSource(photo.value)}
-                    alt={photo.alt}
-                    class="max-h-48 rounded object-contain"
-                  />
-                {/if}
-                <label for={`photo-${i}`} class="block text-sm">Image URL {i + 1}</label>
-                <input
-                  id={`photo-${i}`}
-                  type="url"
-                  required
-                  pattern="https?://.*"
-                  bind:value={photo.value}
-                  class="w-full rounded border border-surface-200-800 bg-surface-50-950 p-2"
-                />
-                <label for={`alt-${i}`} class="block text-sm">Alt text {i + 1}</label>
-                <input
-                  id={`alt-${i}`}
-                  bind:value={photo.alt}
-                  class="w-full rounded border border-surface-200-800 bg-surface-50-950 p-2"
-                />
-                <button type="button" onclick={() => photos.splice(i, 1)} class="text-sm underline"
-                  >Remove image {i + 1}</button
-                >
-              </div>
-            {/each}
-            <button
-              type="button"
-              onclick={() => photos.push({ value: '', alt: '' })}
-              class="text-sm underline">Add image URL</button
-            >
-          </section>
-        {/if}
-        {#if postType === 'article' || postType === 'bookmark'}
-          <div>
-            <label for="title" class="mb-2 block text-sm font-medium text-surface-700-300">
-              {postType === 'article' ? 'Title *' : 'Link title (optional)'}
-            </label>
-            <input
-              type="text"
-              id="title"
-              bind:value={title}
-              required={postType === 'article'}
-              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
-            />
-          </div>
-        {/if}
-
-        <div>
-          <div class="mb-2 flex items-center justify-between">
-            <label for="content" class="text-sm font-medium text-surface-700-300">
-              {postType === 'note'
-                ? 'What’s on your mind? *'
-                : postType === 'bookmark'
-                  ? 'Why save this? (optional)'
-                  : postType === 'photo'
-                    ? 'Caption (optional)'
-                    : 'Content (Markdown) *'}
-            </label>
-            {#if postType !== 'photo'}{@render imageUpload()}{/if}
-          </div>
-
-          <!-- Tabs -->
-          <div class="mb-2 flex gap-2 border-b border-surface-200-800">
-            <button
-              type="button"
-              onclick={() => (activeTab = 'edit')}
-              class="px-4 py-2 text-sm {activeTab === 'edit'
-                ? 'border-b-2 border-primary-500 text-primary-500'
-                : 'text-surface-600-400 hover:text-surface-700-300'}"
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              onclick={() => (activeTab = 'preview')}
-              class="px-4 py-2 text-sm {activeTab === 'preview'
-                ? 'border-b-2 border-primary-500 text-primary-500'
-                : 'text-surface-600-400 hover:text-surface-700-300'}"
-            >
-              Preview {previewLoading ? '(loading...)' : ''}
-            </button>
-          </div>
-
-          <!-- Edit mode -->
-          {#if activeTab === 'edit'}
-            <textarea
-              id="content"
-              bind:this={contentField}
-              bind:value={content}
-              ondragover={handleImageDragOver}
-              ondrop={handleImageDrop}
-              required={postType === 'article' || postType === 'note'}
-              rows={postType === 'article' ? 20 : 6}
-              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 font-mono text-sm text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
-            ></textarea>
-            <p class="mt-1 text-sm text-surface-600-400">
-              {uploadingImage
-                ? 'Uploading images…'
-                : 'Drop images here to insert them into your text.'}
-            </p>
-            {#if inlineImages.length}
-              <section aria-label="Content images" class="mt-3 flex flex-wrap gap-3">
-                {#each inlineImages as image, i (i)}
-                  <figure class="max-w-40">
-                    <img
-                      src={imageSource(image.value)}
-                      alt={image.alt}
-                      class="h-24 w-40 rounded object-contain"
-                    />
-                    <figcaption class="mt-1 truncate text-xs text-surface-600-400">
-                      {image.alt || 'Image'}
-                    </figcaption>
-                  </figure>
-                {/each}
-              </section>
-            {/if}
-          {/if}
-
-          <!-- Preview mode -->
-          {#if activeTab === 'preview'}
-            <div
-              aria-label="Post preview"
-              class="prose prose-sm min-h-125 w-full rounded-lg border border-surface-200-800 bg-surface-50-950 p-4 dark:prose-invert"
-            >
-              {#if title && (postType === 'article' || postType === 'bookmark')}
-                <h2>{title}</h2>
-              {/if}
-              {#if postType === 'bookmark' && /^https?:\/\//.test(bookmark)}
-                <!-- External bookmark URL, not a SvelteKit route. -->
-                <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
-                <a href={bookmark} target="_blank" rel="noreferrer">{bookmark}</a>
-              {/if}
-              {#if postType === 'photo'}
-                {#each photos as photo (photo)}
-                  {#if /^https?:\/\//.test(photo.value)}
-                    <img
-                      src={imageSource(photo.value)}
-                      alt={photo.alt}
-                      class="max-h-96 rounded object-contain"
-                    />
-                  {/if}
-                {/each}
-              {/if}
-              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-              {@html previewHtml}
-            </div>
-          {/if}
-        </div>
-
-        <details open={postType === 'article'} class="space-y-4">
-          <summary class="cursor-pointer text-sm font-medium">Post details</summary>
-          <div>
-            <label for="slug" class="mb-2 block text-sm font-medium text-surface-700-300">
-              Slug (optional)
-            </label>
-            <div class="flex items-center gap-2">
+            <label for="slug" class="mb-1 block font-medium text-surface-700-300">Slug</label>
+            <div class="flex items-center gap-3">
               <input
                 type="text"
                 id="slug"
                 bind:value={slug}
                 disabled={autoSlug}
-                class="flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none disabled:opacity-50"
+                class="min-w-0 flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1.5 disabled:opacity-50"
               />
-              <label class="flex items-center gap-2 text-sm text-surface-700-300">
+              <label class="flex items-center gap-1.5 text-surface-700-300">
                 <input type="checkbox" bind:checked={autoSlug} class="rounded" />
-                Auto-generate
+                Auto
               </label>
             </div>
           </div>
-
           <div>
-            <label for="summary" class="mb-2 block text-sm font-medium text-surface-700-300">
-              Summary
+            <label for="categories" class="mb-1 block font-medium text-surface-700-300"
+              >Categories</label
+            >
+            <input
+              type="text"
+              id="categories"
+              bind:value={categories}
+              placeholder="ruby, rails, web"
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1.5"
+            />
+          </div>
+          <div>
+            <label for="published-at" class="mb-1 block font-medium text-surface-700-300">
+              Publication date (local time)
             </label>
+            <div class="flex items-center gap-2">
+              <input
+                type="datetime-local"
+                id="published-at"
+                bind:value={publishedAt}
+                required
+                step="any"
+                class="min-w-0 flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1.5"
+              />
+              <button
+                type="button"
+                onclick={() => (publishedAt = localDateTime(new Date()))}
+                class="rounded-lg border border-surface-200-800 px-3 py-1.5 hover:bg-surface-100-900"
+              >
+                Now
+              </button>
+            </div>
+          </div>
+          <div>
+            <label for="updated-at" class="mb-1 block font-medium text-surface-700-300"
+              >Updated (optional, local time)</label
+            >
+            <input
+              id="updated-at"
+              type="datetime-local"
+              step="any"
+              bind:value={updatedAt}
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1.5"
+            />
+            <div class="mt-1 flex gap-3 text-xs">
+              <button
+                type="button"
+                onclick={() => (updatedAt = localDateTime(new Date()))}
+                class="underline">Set updated to now</button
+              >
+              <button type="button" onclick={() => (updatedAt = '')} class="underline"
+                >Clear updated time</button
+              >
+            </div>
+          </div>
+          <div class="sm:col-span-2">
+            <label for="summary" class="mb-1 block font-medium text-surface-700-300">Summary</label>
             <input
               type="text"
               id="summary"
               bind:value={summary}
               placeholder="Short summary for previews"
-              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1.5"
             />
           </div>
-
           <div>
-            <label for="featured" class="mb-2 block text-sm font-medium text-surface-700-300"
+            <label for="featured" class="mb-1 block font-medium text-surface-700-300"
               >Featured image URL</label
             >
             <input
@@ -1033,43 +1168,20 @@
               pattern="https?://.*"
               bind:value={featured}
               placeholder="https://example.com/cover.jpg"
-              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2"
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1.5"
             />
-            <p class="mt-1 text-sm text-surface-600-400">
-              A cover image for the post, separate from photos in its content.
+            <p class="mt-1 text-xs text-surface-600-400">
+              A cover image, separate from photos in the content.
             </p>
           </div>
           <div>
-            <label for="updated-at" class="mb-2 block text-sm font-medium text-surface-700-300"
-              >Updated date and time (optional, local time)</label
-            >
-            <div class="flex items-center gap-2">
-              <input
-                id="updated-at"
-                type="datetime-local"
-                step="any"
-                bind:value={updatedAt}
-                class="min-w-0 flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2"
-              />
-              <button
-                type="button"
-                onclick={() => (updatedAt = localDateTime(new Date()))}
-                class="rounded-lg border border-surface-200-800 px-4 py-2 text-sm"
-                >Set updated to now</button
-              >
-              <button type="button" onclick={() => (updatedAt = '')} class="text-sm underline"
-                >Clear updated time</button
-              >
-            </div>
-          </div>
-          <div>
-            <label for="visibility" class="mb-2 block text-sm font-medium text-surface-700-300"
+            <label for="visibility" class="mb-1 block font-medium text-surface-700-300"
               >Visibility</label
             >
             <select
               id="visibility"
               bind:value={visibility}
-              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2"
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1.5"
             >
               <option value="">Default (public)</option>
               <option value="public">Public</option>
@@ -1079,81 +1191,145 @@
                 <option value={visibility}>{visibility} (existing value)</option>
               {/if}
             </select>
-            <p class="mt-1 text-sm text-surface-600-400">
-              The blog currently excludes unlisted and private posts from publication. This metadata
-              does not protect files in the repository.
+            <p class="mt-1 text-xs text-surface-600-400">
+              The blog leaves unlisted and private posts unpublished. This does not protect files in
+              the repository.
             </p>
           </div>
+        </div>
+      </div>
+    </div>
 
-          <div>
-            <label for="categories" class="mb-2 block text-sm font-medium text-surface-700-300">
-              Categories
-            </label>
-            <input
-              type="text"
-              id="categories"
-              bind:value={categories}
-              placeholder="Comma-separated (e.g., ruby, rails, web)"
-              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label for="published-at" class="mb-2 block text-sm font-medium text-surface-700-300">
-              Publication date and time (local time)
-            </label>
-            <div class="flex items-center gap-2">
-              <input
-                type="datetime-local"
-                id="published-at"
-                bind:value={publishedAt}
-                required
-                step="any"
-                class="min-w-0 flex-1 rounded-lg border border-surface-200-800 bg-surface-50-950 px-4 py-2 text-surface-950-50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500 focus:outline-none"
+    {#if postType === 'photo'}
+      <section aria-label="Photos" class="mt-6 space-y-4">
+        <div class="flex items-center justify-between gap-4">
+          <h2 class="font-semibold">Photos</h2>
+          {@render imageUpload('text')}
+        </div>
+        <p class="text-sm text-surface-600-400">
+          Upload an image, or add an image URL. Alt text describes the image for people who cannot
+          see it.
+        </p>
+        {#each photos as photo, i (photo)}
+          <div class="grid gap-2 rounded-lg border border-surface-200-800 p-3 text-sm">
+            {#if /^https?:\/\//.test(photo.value)}
+              <img
+                src={imageSource(photo.value)}
+                alt={photo.alt}
+                class="max-h-48 rounded object-contain"
               />
-              <button
-                type="button"
-                onclick={() => (publishedAt = localDateTime(new Date()))}
-                class="rounded-lg border border-surface-200-800 px-4 py-2 text-sm text-surface-700-300 hover:bg-surface-100-900"
-              >
-                Now
-              </button>
-            </div>
-          </div>
-        </details>
-
-        <div>
-          <label class="flex items-center gap-2 text-sm font-medium text-surface-700-300">
-            <input
-              type="checkbox"
-              bind:checked={published}
-              class="rounded border-surface-200-800 text-primary-500 focus:ring-2 focus:ring-primary-500"
-            />
-            Published (uncheck to save as draft)
-          </label>
-        </div>
-
-        <div class="flex justify-end gap-4">
-          <a
-            href={resolve('/')}
-            class="rounded-lg border border-surface-200-800 px-6 py-2 text-surface-700-300 hover:bg-surface-100-900"
-          >
-            Cancel
-          </a>
-          <button
-            type="submit"
-            disabled={submitting || uploadingImage || (postType === 'photo' && !photos.length)}
-            class="rounded-lg bg-primary-500 px-6 py-2 text-white hover:bg-primary-600 disabled:opacity-50"
-          >
-            {#if submitting}
-              {currentPath ? 'Updating...' : 'Creating...'}
-            {:else}
-              {currentPath ? 'Update Post' : 'Create Post'}
             {/if}
-          </button>
-        </div>
-      </form>
-      <ActionLog {actions} onClear={() => (actions = [])} />
-    </main>
-  </div>
-</div>
+            <label for={`photo-${i}`}>Image URL {i + 1}</label>
+            <input
+              id={`photo-${i}`}
+              type="url"
+              required
+              pattern="https?://.*"
+              bind:value={photo.value}
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1.5"
+            />
+            <label for={`alt-${i}`}>Alt text {i + 1}</label>
+            <input
+              id={`alt-${i}`}
+              bind:value={photo.alt}
+              class="w-full rounded-lg border border-surface-200-800 bg-surface-50-950 px-3 py-1.5"
+            />
+            <button
+              type="button"
+              onclick={() => photos.splice(i, 1)}
+              class="justify-self-start underline">Remove image {i + 1}</button
+            >
+          </div>
+        {/each}
+        <button
+          type="button"
+          onclick={() => photos.push({ value: '', alt: '' })}
+          class="text-sm underline">Add image URL</button
+        >
+      </section>
+    {/if}
+
+    {#if activeTab === 'edit'}
+      <label for="content" class="sr-only">
+        {postType === 'note'
+          ? 'What’s on your mind? *'
+          : postType === 'bookmark'
+            ? 'Why save this? (optional)'
+            : postType === 'photo'
+              ? 'Caption (optional)'
+              : 'Content (Markdown) *'}
+      </label>
+      <textarea
+        id="content"
+        bind:this={contentField}
+        bind:value={content}
+        ondragover={handleImageDragOver}
+        ondrop={handleImageDrop}
+        required={postType === 'article' || postType === 'note'}
+        rows={postType === 'article' ? 20 : 6}
+        placeholder={postType === 'note'
+          ? 'What’s on your mind?'
+          : postType === 'bookmark'
+            ? 'Why save this?'
+            : postType === 'photo'
+              ? 'Caption'
+              : 'Write in Markdown. Drop images anywhere.'}
+        class="mt-6 block w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-mono text-sm leading-7 text-surface-950-50 placeholder:text-surface-400-600 focus:ring-0 sm:text-[15px] {postType ===
+        'article'
+          ? 'min-h-[60vh]'
+          : 'min-h-40'}"></textarea>
+      {#if uploadingImage}
+        <p class="mt-2 text-sm text-surface-600-400">Uploading images…</p>
+      {/if}
+      {#if inlineImages.length}
+        <section
+          aria-label="Content images"
+          class="mt-6 flex flex-wrap gap-3 border-t border-surface-200-800 pt-4"
+        >
+          {#each inlineImages as image, i (i)}
+            <figure class="max-w-40">
+              <img
+                src={imageSource(image.value)}
+                alt={image.alt}
+                class="h-24 w-40 rounded object-contain"
+              />
+              <figcaption class="mt-1 truncate text-xs text-surface-600-400">
+                {image.alt || 'Image'}
+              </figcaption>
+            </figure>
+          {/each}
+        </section>
+      {/if}
+    {:else}
+      <article
+        aria-label="Post preview"
+        class="prose mt-6 max-w-none sm:prose-lg dark:prose-invert"
+      >
+        {#if title && (postType === 'article' || postType === 'bookmark')}
+          <h1>{title}</h1>
+        {/if}
+        {#if postType === 'bookmark' && /^https?:\/\//.test(bookmark)}
+          <!-- External bookmark URL, not a SvelteKit route. -->
+          <!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+          <a href={bookmark} target="_blank" rel="noreferrer">{bookmark}</a>
+        {/if}
+        {#if postType === 'photo'}
+          {#each photos as photo (photo)}
+            {#if /^https?:\/\//.test(photo.value)}
+              <img
+                src={imageSource(photo.value)}
+                alt={photo.alt}
+                class="max-h-96 rounded object-contain"
+              />
+            {/if}
+          {/each}
+        {/if}
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+        {@html previewHtml}
+        {#if previewLoading}<p class="text-surface-600-400">Rendering…</p>{/if}
+      </article>
+    {/if}
+  </form>
+
+  <ActionLog {actions} onClear={() => (actions = [])} />
+</main>
