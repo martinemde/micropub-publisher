@@ -139,7 +139,8 @@ test('server renders the signed-in editor without browser storage', async () => 
       }
     });
     expect(result.body).toContain('Logout');
-    expect(result.body).toContain('Blog Posts');
+    expect(result.body).toContain('aria-label="Posts"');
+    expect(result.body).toContain('New post');
   } finally {
     await vite.close();
     await rm(directory, { recursive: true, force: true });
