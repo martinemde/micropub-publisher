@@ -1,4 +1,5 @@
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import type { BeforeNavigate } from '@sveltejs/kit';
 import { mount, unmount, flushSync } from 'svelte';
 import Editor from './+page.svelte';
 import matter from 'gray-matter';
@@ -7,6 +8,12 @@ import { mutatePost } from '$lib/server/micropub-posts';
 import { env } from '$env/dynamic/public';
 
 vi.mock('$app/environment', () => ({ browser: true, dev: true, building: false }));
+
+const { beforeNavigate } = vi.hoisted(() => ({
+  beforeNavigate: vi.fn<(callback: (navigation: BeforeNavigate) => void) => void>()
+}));
+vi.mock('$app/navigation', () => ({ beforeNavigate }));
+beforeEach(() => beforeNavigate.mockClear());
 
 let editor: ReturnType<typeof mount>;
 afterEach(async () => {
@@ -184,7 +191,8 @@ test.each(['unchanged', 'edited', 'now', 'new'])(
     }
     flushSync();
     if (scenario !== 'unchanged') {
-      postButton().click();
+      // Choosing a different composer warns; selecting the open post is a no-op.
+      button('New post').click();
       expect(confirm).toHaveBeenCalledOnce();
     }
     document.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
@@ -1172,3 +1180,250 @@ test.each(['2026-03-20', '2026-03-20T18:25:00.000Z', '2026-03-20T18:25:36.780Z']
     );
   }
 );
+
+function navigate(willUnload = false) {
+  const cancel = vi.fn();
+  const registration = beforeNavigate.mock.calls.at(-1);
+  expect(registration).toBeDefined();
+  registration![0]({ willUnload, cancel } as unknown as BeforeNavigate);
+  flushSync();
+  return cancel;
+}
+
+async function loadRecoveryPost() {
+  const fetch = vi.fn(async (url: string) =>
+    url === '/api/posts'
+      ? Response.json([
+          { path: 'src/content/blog/recovery.md', slug: 'recovery', date: '2026-03-20' }
+        ])
+      : Response.json({
+          content: 'Original body',
+          frontmatter: { title: 'Recovery', slug: 'recovery', date: '2026-03-20' }
+        })
+  );
+  vi.stubGlobal('fetch', fetch);
+  startEditor();
+  await vi.waitFor(() =>
+    expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('Recovery')
+  );
+  return fetch;
+}
+
+test.each(['dirty', 'clean'])(
+  'flushes a backup and warns on native beforeunload only when %s',
+  async (state) => {
+    const storage = memoryStorage();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    await loadRecoveryPost();
+    if (state === 'dirty') fill('#content', 'Latest edit before debounce');
+    expect(storage.size).toBe(0);
+
+    const event = new Event('beforeunload', { cancelable: true });
+    const preventDefault = vi.spyOn(event, 'preventDefault');
+    window.dispatchEvent(event);
+
+    expect(preventDefault).toHaveBeenCalledTimes(state === 'dirty' ? 1 : 0);
+    expect(event.defaultPrevented).toBe(state === 'dirty');
+    expect(confirm).not.toHaveBeenCalled();
+    if (state === 'dirty') {
+      expect(JSON.parse(storage.get('blog-editor-draft')!)).toMatchObject({
+        content: 'Latest edit before debounce'
+      });
+    } else {
+      expect(storage.size).toBe(0);
+    }
+  }
+);
+
+test.each([true, false])(
+  'flushes immediate backup and respects an in-app navigation confirmation of %s',
+  async (accepted) => {
+    const storage = memoryStorage();
+    const confirm = vi.fn(() => accepted);
+    vi.stubGlobal('confirm', confirm);
+    await loadRecoveryPost();
+    fill('#content', 'Unsaved navigation edit');
+    expect(storage.size).toBe(0);
+
+    const cancel = navigate();
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledTimes(accepted ? 0 : 1);
+    expect(JSON.parse(storage.get('blog-editor-draft')!)).toMatchObject({
+      content: 'Unsaved navigation edit'
+    });
+    expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe(
+      'Unsaved navigation edit'
+    );
+  }
+);
+
+test('allows clean in-app navigation without a confirmation or backup', async () => {
+  const storage = memoryStorage();
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal('confirm', confirm);
+  await loadRecoveryPost();
+
+  expect(navigate()).not.toHaveBeenCalled();
+  expect(confirm).not.toHaveBeenCalled();
+  expect(storage.size).toBe(0);
+});
+
+test('leaves document navigation warnings to native beforeunload', async () => {
+  const storage = memoryStorage();
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal('confirm', confirm);
+  await loadRecoveryPost();
+  fill('#content', 'Leaving the document');
+
+  expect(navigate(true)).not.toHaveBeenCalled();
+  expect(confirm).not.toHaveBeenCalled();
+  expect(storage.size).toBe(0);
+  const event = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  expect(JSON.parse(storage.get('blog-editor-draft')!)).toMatchObject({
+    content: 'Leaving the document'
+  });
+});
+
+test('restores the saved post baseline and removes the stale backup after reverting', async () => {
+  const storage = memoryStorage();
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal('confirm', confirm);
+  const fetch = await loadRecoveryPost();
+  vi.useFakeTimers();
+  fill('#content', 'Backed up edit');
+  await vi.advanceTimersByTimeAsync(1000);
+  const draft = JSON.parse(storage.get('blog-editor-draft')!);
+  expect(typeof draft.savedPost).toBe('string');
+  expect(JSON.parse(draft.savedPost)).toMatchObject({ content: 'Original body' });
+  expect(document.querySelector('header')?.textContent).toMatch(/preserved/i);
+
+  await unmount(editor);
+  document.body.replaceChildren();
+  fetch.mockClear();
+  startEditor();
+  expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe('Backed up edit');
+  await vi.waitFor(() =>
+    expect(document.querySelector('aside')?.textContent).toContain('Unsaved changes')
+  );
+  const dirtyUnload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(dirtyUnload);
+  expect(dirtyUnload.defaultPrevented).toBe(true);
+
+  fill('#content', 'Original body');
+  expect(document.querySelector('aside')?.textContent).not.toContain('Unsaved changes');
+  expect(storage.has('blog-editor-draft')).toBe(false);
+  expect(navigate()).not.toHaveBeenCalled();
+  expect(confirm).not.toHaveBeenCalled();
+  const cleanUnload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(cleanUnload);
+  expect(cleanUnload.defaultPrevented).toBe(false);
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(storage.has('blog-editor-draft')).toBe(false);
+  expect(fetch.mock.calls.filter(([url]) => url.startsWith('/api/posts/read?'))).toHaveLength(0);
+});
+
+test('selecting the open edited post preserves edits without a prompt or fetch and closes the drawer', async () => {
+  const storage = memoryStorage();
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal('confirm', confirm);
+  const fetch = await loadRecoveryPost();
+  vi.useFakeTimers();
+  fill('#content', 'Keep this edit');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(document.querySelector('header')?.textContent).toMatch(/preserved/i);
+  expect(storage.has('blog-editor-draft')).toBe(true);
+  fetch.mockClear();
+
+  const menu = document.querySelector<HTMLButtonElement>('[aria-controls="post-drawer"]')!;
+  menu.click();
+  flushSync();
+  expect(menu.getAttribute('aria-expanded')).toBe('true');
+  const post = [...document.querySelectorAll<HTMLButtonElement>('aside button')].find((item) =>
+    item.textContent?.includes('recovery')
+  )!;
+  post.click();
+  flushSync();
+
+  expect(confirm).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(menu.getAttribute('aria-expanded')).toBe('false');
+  expect(document.querySelector('aside')!.inert).toBe(true);
+  expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe('Keep this edit');
+  expect(post.textContent).toContain('Unsaved changes');
+  expect(storage.has('blog-editor-draft')).toBe(true);
+});
+
+test('warns about losing edits if a navigation backup fails', async () => {
+  memoryStorage();
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal('confirm', confirm);
+  await loadRecoveryPost();
+  vi.stubGlobal('localStorage', {
+    getItem: () => null,
+    setItem: () => {
+      throw new Error('Storage is full');
+    },
+    removeItem: vi.fn()
+  });
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    fill('#content', 'Edits without a backup');
+    expect(navigate()).toHaveBeenCalledOnce();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('lose these changes'));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('could not be preserved'));
+    expect(document.querySelector('header')?.textContent).not.toMatch(/preserved/i);
+    expect(error).toHaveBeenCalled();
+  } finally {
+    error.mockRestore();
+  }
+});
+
+test('retains per-type composer baselines after reload and removes only the reverted draft', async () => {
+  const storage = memoryStorage();
+  vi.stubGlobal('fetch', async () => Response.json([]));
+  startEditor();
+  fill('#title', 'Unfinished article');
+  fill('#content', 'Article draft body');
+  button('Note').click();
+  flushSync();
+  expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe('');
+  const cleanNoteUnload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(cleanNoteUnload);
+  expect(cleanNoteUnload.defaultPrevented).toBe(false);
+
+  fill('#content', 'Note draft body');
+  button('Article').click();
+  flushSync();
+  expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('Unfinished article');
+  expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe('Article draft body');
+  const dirtyArticleUnload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(dirtyArticleUnload);
+  expect(dirtyArticleUnload.defaultPrevented).toBe(true);
+
+  await unmount(editor);
+  document.body.replaceChildren();
+  startEditor();
+  expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('Unfinished article');
+  fill('#title', '');
+  fill('#content', '');
+  // Clearing a title keeps its generated slug; revert that saved field too.
+  fill('#slug', '');
+  const revertedUnload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(revertedUnload);
+  expect(revertedUnload.defaultPrevented).toBe(false);
+  const remaining = JSON.parse(storage.get('blog-editor-draft')!);
+  expect(remaining.drafts).not.toHaveProperty('article');
+  expect(remaining.drafts.note).toMatchObject({ content: 'Note draft body' });
+  expect(document.querySelector('header')?.textContent).not.toContain('Unsaved');
+
+  button('Note').click();
+  flushSync();
+  expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe('Note draft body');
+  const dirtyNoteUnload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(dirtyNoteUnload);
+  expect(dirtyNoteUnload.defaultPrevented).toBe(true);
+});
