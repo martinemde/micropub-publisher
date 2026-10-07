@@ -14,6 +14,7 @@
     onSelectPost: (path: string, isDraft: boolean) => void;
     currentPath?: string;
     hasDraft?: boolean;
+    hasUnsavedChanges?: boolean;
     request?: (url: string) => Promise<Response>;
     onLoad?: (posts: BlogPostFileInfo[]) => void;
   }
@@ -22,6 +23,7 @@
     onSelectPost,
     currentPath = '',
     hasDraft = false,
+    hasUnsavedChanges = false,
     request = fetch,
     onLoad
   }: Props = $props();
@@ -91,7 +93,7 @@
 
   <div class="-mx-1 flex-1 space-y-0.5 overflow-y-auto px-1 pb-3">
     <!-- Draft post (if exists) -->
-    {#if hasDraft}
+    {#if hasDraft && !currentPath}
       <button
         type="button"
         onclick={() => onSelectPost('', true)}
@@ -128,6 +130,9 @@
           <div class="min-w-0 flex-1">
             <div class="truncate text-sm">{post.slug}</div>
             <div class="text-xs text-surface-600-400">{formatDate(post.date)}</div>
+            {#if currentPath === post.path && hasUnsavedChanges}
+              <div class="mt-1 text-xs font-medium text-primary-700-300">Unsaved changes</div>
+            {/if}
           </div>
         </button>
       {/each}

@@ -43,6 +43,11 @@
     return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, -1);
   }
 
+  function normalizedDateTime(value: string): string {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : localDateTime(date);
+  }
+
   function sameLocalDateTime(first: string, second: string): boolean {
     // datetime-local inputs may remove zero seconds or fractional trailing zeros.
     return new Date(first).getTime() === new Date(second).getTime();
@@ -126,11 +131,13 @@
       slug,
       summary,
       featured,
-      updatedAt,
+      // datetime-local inputs normalize zero seconds and trailing fractional zeros.
+      // Compare equivalent timestamps rather than their displayed strings.
+      updatedAt: normalizedDateTime(updatedAt),
       visibility,
       categories,
       published,
-      publishedAt,
+      publishedAt: normalizedDateTime(publishedAt),
       currentPath
     };
   }
@@ -427,7 +434,7 @@
     // Check if there are unsaved changes
     if (hasUnsavedChanges()) {
       const confirmed = confirm(
-        'You have unsaved changes in your draft. Loading a different post will discard these changes. Continue?'
+        'You have unsaved changes. Loading a different post will discard these changes. Continue?'
       );
       if (!confirmed) {
         return;
@@ -866,7 +873,8 @@
         onSelectPost={handleSelectPost}
         onLoad={handlePostsLoaded}
         {currentPath}
-        hasDraft={lastSaved !== null}
+        hasDraft={!currentPath && hasUnsavedChanges()}
+        hasUnsavedChanges={hasUnsavedChanges()}
         request={loggedFetch}
       />
     </div>
