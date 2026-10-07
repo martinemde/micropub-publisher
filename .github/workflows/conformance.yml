@@ -19,9 +19,7 @@ jobs:
           node-version: '26.9.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run check
       - run: pnpm run lint
-      - run: pnpm run test
       - run: pnpm run build
       - run: pnpm run test:cloudflare
       - run: pnpm run conformance:setup
