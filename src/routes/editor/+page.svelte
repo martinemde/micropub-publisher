@@ -5,6 +5,7 @@
   import type { PageData } from './$types';
   import { ImagePlus, Menu, X, Plus, Eye, PenLine, ChevronDown, LogOut } from 'lucide-svelte';
   import { resolve } from '$app/paths';
+  import { beforeNavigate } from '$app/navigation';
   import { unified } from 'unified';
   import { browser } from '$app/environment';
   import BlogPostList from '$lib/components/BlogPostList.svelte';
@@ -33,6 +34,7 @@
     published: boolean;
     publishedAt?: string;
     savedPublishedAt?: string;
+    savedPost?: string; // Last loaded/submitted state, not the local backup
     autoSlug: boolean;
     savedAt: string;
     currentPath: string;
@@ -218,6 +220,8 @@
         savedPublishedAt = draft.savedPublishedAt ?? '';
         autoSlug = draft.autoSlug;
         currentPath = draft.currentPath || '';
+        // Older backups have no baseline. Keep them conservatively dirty.
+        if (typeof draft.savedPost === 'string') savedPost = draft.savedPost;
         lastSaved = new Date(draft.savedAt);
         saveStatus = 'saved';
       }
@@ -239,9 +243,13 @@
   // Debounced auto-save to localStorage
   let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  function saveDraft() {
-    if (!browser) return;
+  function saveDraft(): boolean {
+    if (!browser) return false;
 
+    if (saveTimeout) {
+      clearTimeout(saveTimeout);
+      saveTimeout = null;
+    }
     saveStatus = 'saving';
 
     try {
@@ -261,6 +269,7 @@
         published,
         publishedAt,
         savedPublishedAt,
+        savedPost,
         autoSlug,
         currentPath,
         savedAt: new Date().toISOString()
@@ -269,9 +278,11 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
       lastSaved = new Date();
       saveStatus = 'saved';
+      return true;
     } catch (err) {
       console.error('Failed to save draft:', err);
       saveStatus = 'idle';
+      return false;
     }
   }
 
@@ -285,7 +296,14 @@
       if (Object.keys(drafts).length) {
         localStorage.setItem(
           STORAGE_KEY,
-          JSON.stringify({ ...postState(), autoSlug, savedAt: new Date().toISOString(), drafts })
+          JSON.stringify({
+            ...postState(),
+            savedPost,
+            savedPublishedAt,
+            autoSlug,
+            savedAt: new Date().toISOString(),
+            drafts
+          })
         );
       } else {
         localStorage.removeItem(STORAGE_KEY);
@@ -299,7 +317,7 @@
 
   function switchType(type: PostType) {
     if (currentPath || submitting || uploadingImage || type === postType) return;
-    drafts[postType] = { ...postState(), autoSlug, savedAt: new Date().toISOString() };
+    drafts[postType] = { ...postState(), savedPost, autoSlug, savedAt: new Date().toISOString() };
     restoreComposer(type);
     saveDraft();
   }
@@ -322,6 +340,8 @@
     savedPublishedAt = draft?.savedPublishedAt ?? '';
     autoSlug = draft?.autoSlug ?? true;
     currentPath = '';
+    if (typeof draft?.savedPost === 'string') savedPost = draft.savedPost;
+    else if (!draft) savedPost = JSON.stringify(postState());
     error = '';
     success = '';
     activeTab = 'edit';
@@ -360,6 +380,24 @@
   function hasUnsavedChanges(): boolean {
     return JSON.stringify(postState()) !== savedPost;
   }
+
+  function handleBeforeUnload(event: BeforeUnloadEvent) {
+    if (!hasUnsavedChanges()) return;
+    // Preserve the latest keystrokes even inside the debounce window.
+    saveDraft();
+    event.preventDefault();
+    event.returnValue = ''; // Required by browsers that still use the legacy API.
+  }
+
+  beforeNavigate((navigation) => {
+    if (!hasUnsavedChanges() || navigation.willUnload) return;
+    // Full-page navigation uses the browser's beforeunload dialog instead.
+    const preserved = saveDraft();
+    const message = preserved
+      ? 'You have unsaved changes on the blog. Leave the editor? Your edits are preserved locally.'
+      : 'You have unsaved changes. Your edits could not be preserved locally. Leave the editor and lose these changes?';
+    if (!confirm(message)) navigation.cancel();
+  });
 
   // Load a blog post from the API. The automatic open of the latest post
   // yields to anything the writer started while the list was loading.
@@ -425,8 +463,8 @@
   // Handle selecting a post from the list
   async function handleSelectPost(path: string, isDraft: boolean) {
     if (submitting || uploadingImage) return;
-    // The draft and an unchanged open post are already in the editor.
-    if (isDraft || (path === currentPath && !hasUnsavedChanges())) {
+    // Selecting the open post must never discard its edits.
+    if (isDraft || path === currentPath) {
       closeDrawer();
       return;
     }
@@ -535,8 +573,8 @@
     if (submitting) return currentPath ? 'Updating on the blog…' : 'Creating on the blog…';
     if (uploadingImage) return 'Uploading image…';
     if (hasUnsavedChanges()) {
-      if (saveStatus === 'saving') return 'Backing up…';
-      return lastSaved ? `Unsaved · backed up ${formatRelativeTime(lastSaved)}` : 'Unsaved changes';
+      if (saveStatus === 'saving') return 'Preserving…';
+      return lastSaved ? `Unsaved · preserved ${formatRelativeTime(lastSaved)}` : 'Unsaved changes';
     }
     return currentPath ? 'Saved to the blog' : 'New post';
   }
@@ -561,8 +599,11 @@
       autoSlug
     ];
 
-    // Only back up changes that haven't been submitted.
-    if (!hasUnsavedChanges()) return;
+    // Remove stale edits from recovery storage after a full revert.
+    if (!hasUnsavedChanges()) {
+      if (lastSaved) clearDraft();
+      return;
+    }
 
     // Clear existing timeout
     if (saveTimeout) {
@@ -826,7 +867,11 @@
   <title>Publisher - Martin Emde</title>
 </svelte:head>
 
-<svelte:window onkeydown={handleKeydown} bind:innerWidth={viewportWidth} />
+<svelte:window
+  onkeydown={handleKeydown}
+  onbeforeunload={handleBeforeUnload}
+  bind:innerWidth={viewportWidth}
+/>
 
 {#if data.isAuthenticated}
   <!-- Pointer convenience; Escape and the close button handle keyboard users. -->
