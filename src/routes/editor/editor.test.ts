@@ -1102,3 +1102,73 @@ test('opens collapsed post details when one of their fields is invalid', async (
   flushSync();
   expect(details.hidden).toBe(false);
 });
+
+test.each(['2026-03-20', '2026-03-20T18:25:00.000Z', '2026-03-20T18:25:36.780Z'])(
+  'keeps a loaded post clean and marks edits on its own sidebar item: %s',
+  async (date) => {
+    const storage = memoryStorage();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url === '/api/posts') {
+        return Response.json(
+          ['first', 'second'].map((slug) => ({
+            filename: `${slug}.md`,
+            path: `src/content/blog/${slug}.md`,
+            slug,
+            date
+          }))
+        );
+      }
+      const slug = url.includes('first.md') ? 'first' : 'second';
+      return Response.json({
+        content: 'Original body',
+        frontmatter: { title: slug, slug, date, updated: date }
+      });
+    });
+    startEditor();
+    const postButton = (slug: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>('aside button')].find((item) =>
+        item.textContent?.includes(slug)
+      )!;
+    await vi.waitFor(() => expect(postButton('first')).toBeDefined());
+    postButton('first').click();
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('first')
+    );
+    postButton('second').click();
+    expect(confirm).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('second')
+    );
+    // Simulate the string normalization performed by datetime-local inputs.
+    for (const selector of ['#published-at', '#updated-at']) {
+      const value = document.querySelector<HTMLInputElement>(selector)!.value;
+      fill(
+        selector,
+        value
+          .replace(/\.000$/, '')
+          .replace(/(T\d{2}:\d{2}):00$/, '$1')
+          .replace(/(\.\d*[1-9])0+$/, '$1')
+      );
+    }
+    expect(storage.size).toBe(0);
+    expect(document.querySelector('aside')?.textContent).not.toContain('Unsaved');
+    fill('#content', 'Edited body');
+    expect(postButton('second').textContent).toContain('Unsaved changes');
+    expect(postButton('first').textContent).not.toContain('Unsaved changes');
+    expect(document.querySelector('aside')?.textContent).not.toContain('Unsaved Draft');
+    await vi.waitFor(() => expect(storage.size).toBe(1), { timeout: 2000 });
+    expect(document.querySelector('aside')?.textContent).not.toContain('Unsaved Draft');
+    postButton('first').click();
+    expect(confirm).toHaveBeenCalledOnce();
+    fill('#content', 'Original body');
+    expect(document.querySelector('aside')?.textContent).not.toContain('Unsaved');
+    confirm.mockClear();
+    postButton('first').click();
+    expect(confirm).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLInputElement>('#title')?.value).toBe('first')
+    );
+  }
+);
