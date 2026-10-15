@@ -1,4 +1,4 @@
-import type { StorageBackend, BlogPostFileInfo } from './types';
+import type { StorageBackend, BlogPostFileInfo } from './types.ts';
 
 /**
  * In-memory storage backend for testing

@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { isRedirect } from '@sveltejs/kit';
-import { GET } from './+server';
+import { GET } from './+server.ts';
 import type { RequestEvent, RequestEvent as FullRequestEvent } from './$types';
-import * as auth from '$lib/server/auth';
-import { storeAccessToken, getAccessToken } from '$lib/server/token-store';
-import { expectRedirect } from '$lib/test-helpers';
+import * as auth from '#lib/server/auth.ts';
+import { storeAccessToken, getAccessToken } from '#lib/server/token-store.ts';
+import { expectRedirect } from '#lib/test-helpers.ts';
 
 // Mock the auth module
-vi.mock('$lib/server/auth', async () => {
-  const actual = await vi.importActual('$lib/server/auth');
+vi.mock('#lib/server/auth.ts', async () => {
+  const actual = await vi.importActual('#lib/server/auth.ts');
   return {
     ...actual,
     clearSession: vi.fn()

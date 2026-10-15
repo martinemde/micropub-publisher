@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { isRedirect } from '@sveltejs/kit';
-import { GET } from './+server';
+import { GET } from './+server.ts';
 import type { RequestEvent, RequestEvent as FullRequestEvent } from './$types';
-import * as auth from '$lib/server/auth';
-import { expectHttpError, expectRedirect } from '$lib/test-helpers';
+import * as auth from '#lib/server/auth.ts';
+import { expectHttpError, expectRedirect } from '#lib/test-helpers.ts';
 
 // Mock the auth module (env mocks are in vitest-setup.ts)
-vi.mock('$lib/server/auth', async () => {
-  const actual = await vi.importActual('$lib/server/auth');
+vi.mock('#lib/server/auth.ts', async () => {
+  const actual = await vi.importActual('#lib/server/auth.ts');
   return {
     ...actual,
     generateState: vi.fn(() => 'mock_oauth_state')

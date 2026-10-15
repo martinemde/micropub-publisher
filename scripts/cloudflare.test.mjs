@@ -236,7 +236,10 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
       postFailure = failure;
       const rejected = await createPost();
       expect(rejected.status).toBe(500);
-      expect(await rejected.json()).toEqual({ message: `Failed to create post: ${detail}` });
+      expect(await rejected.json()).toEqual({
+        message: `Failed to create post: ${detail}`,
+        status: 500
+      });
       expect(createdPost).toBeUndefined();
     }
     postFailure = undefined;
@@ -290,7 +293,7 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
       body: mediaBody
     });
     expect(rejectedUpload.status).toBe(500);
-    expect(await rejectedUpload.json()).toEqual({ message: 'Failed to upload image' });
+    expect(await rejectedUpload.json()).toEqual({ message: 'Failed to upload image', status: 500 });
 
     expect(
       (

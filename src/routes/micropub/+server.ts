@@ -1,5 +1,5 @@
 import { error, isHttpError, json } from '@sveltejs/kit';
-import { env } from '$env/dynamic/public';
+import { PUBLIC_APP_URL } from '$app/env/public';
 import {
   parseMicropubRequest,
   generateMarkdownFile,
@@ -8,18 +8,18 @@ import {
   readProperties,
   invalid,
   siteDateParts
-} from '$lib/server/micropub';
-import { createStorageBackend } from '$lib/server/storage/factory';
-import { requireMicropubToken } from '$lib/server/micropub-auth';
-import { requireEnvironmentVariable } from '$lib/server/env';
+} from '#lib/server/micropub.ts';
+import { createStorageBackend } from '#lib/server/storage/factory.ts';
+import { requireMicropubToken } from '#lib/server/micropub-auth.ts';
+import { requireEnvironmentVariable } from '#lib/server/env.ts';
 import {
   archivePath,
   findPost,
   mutatePost,
   postLocation,
   postUrl
-} from '$lib/server/micropub-posts';
-import { uploadPhoto, validatePhoto } from '$lib/server/micropub-media';
+} from '#lib/server/micropub-posts.ts';
+import { uploadPhoto, validatePhoto } from '#lib/server/micropub-media.ts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -34,7 +34,7 @@ export const GET: RequestHandler = async ({ url, request, locals }) => {
 
   if (query === 'config') {
     return json({
-      'media-endpoint': `${requireEnvironmentVariable('PUBLIC_APP_URL', env.PUBLIC_APP_URL)}/micropub/media`,
+      'media-endpoint': `${requireEnvironmentVariable('PUBLIC_APP_URL', PUBLIC_APP_URL)}/micropub/media`,
       'syndicate-to': [],
       'post-types': [
         { type: 'note', name: 'Note' },
@@ -88,14 +88,14 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       try {
         micropubRequest = await request.json();
       } catch {
-        error(400, { message: 'Invalid JSON', error: 'invalid_request' });
+        error(400, 'Invalid JSON', { error: 'invalid_request' });
       }
       if (
         !micropubRequest ||
         typeof micropubRequest !== 'object' ||
         Array.isArray(micropubRequest)
       ) {
-        error(400, { message: 'Expected a JSON object', error: 'invalid_request' });
+        error(400, 'Expected a JSON object', { error: 'invalid_request' });
       }
       bodyToken = micropubRequest.access_token;
     } else if (

@@ -1,7 +1,7 @@
-import { error, redirect, isRedirect } from '@sveltejs/kit';
-import { exchangeCodeForToken, getSession, setSession, createAuthCode } from '$lib/server/auth';
-import { getGitHubUser, verifyRepoOwnership } from '$lib/server/github-auth';
-import { revokeGithubCredential } from '$lib/server/github-user-token';
+import { error, redirect, isHttpError, isRedirect } from '@sveltejs/kit';
+import { exchangeCodeForToken, getSession, setSession, createAuthCode } from '#lib/server/auth.ts';
+import { getGitHubUser, verifyRepoOwnership } from '#lib/server/github-auth.ts';
+import { revokeGithubCredential } from '#lib/server/github-user-token.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -96,7 +96,8 @@ export const GET: RequestHandler = async (event) => {
       redirectUrl.searchParams.set('code', authCode);
       redirectUrl.searchParams.set('state', indieAuthReq.state);
 
-      redirect(302, redirectUrl.toString());
+      // The client's redirect_uri was validated above.
+      redirect(302, redirectUrl, { external: true });
     }
 
     // Normal (non-IndieAuth) flow: store user and token in session
@@ -108,19 +109,8 @@ export const GET: RequestHandler = async (event) => {
     });
   } catch (err) {
     if (!isRedirect(err) && credentialReference) revokeGithubCredential(credentialReference);
-    // SvelteKit's redirect() throws a redirect object with status and location
-    // SvelteKit's error() throws an HttpError with status and body
-    // We need to rethrow both, only catching unexpected errors
-    if (err && typeof err === 'object' && 'status' in err) {
-      // Check if it's a redirect (has location) or HttpError (has body)
-      // Both must be non-enumerable properties to be SvelteKit errors
-      const hasLocation = 'location' in err;
-      const hasBody = 'body' in err;
-
-      if (hasLocation || hasBody) {
-        throw err;
-      }
-    }
+    // Rethrow SvelteKit's redirects and HTTP errors; only unexpected errors are handled here.
+    if (isRedirect(err) || isHttpError(err)) throw err;
 
     // GitHub errors can carry authorization headers or token responses.
     console.error('GitHub user authentication failed');

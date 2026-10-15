@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { POST } from './+server';
-import { createAuthCode } from '$lib/server/auth';
-import { getAccessToken } from '$lib/server/token-store';
+import { POST } from './+server.ts';
+import { createAuthCode } from '#lib/server/auth.ts';
+import { getAccessToken } from '#lib/server/token-store.ts';
 import type { RequestEvent, RequestEvent as FullRequestEvent } from './$types';
-import { expectHttpError } from '$lib/test-helpers';
+import { expectHttpError } from '#lib/test-helpers.ts';
 
 // Token request body type
 interface TokenRequestBody {

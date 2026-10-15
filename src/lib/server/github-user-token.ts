@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
-import { requireEnvironmentVariable } from './env';
-import { stateMap } from './state';
+import { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET } from '$app/env/private';
+import { requireEnvironmentVariable } from './env.ts';
+import { stateMap } from './state.ts';
 
 type Credential = {
   accessToken: string;
@@ -20,8 +20,8 @@ export async function requestUserToken(parameters: Record<string, string>): Prom
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
-      client_id: requireEnvironmentVariable('GITHUB_CLIENT_ID', env.GITHUB_CLIENT_ID),
-      client_secret: requireEnvironmentVariable('GITHUB_CLIENT_SECRET', env.GITHUB_CLIENT_SECRET),
+      client_id: requireEnvironmentVariable('GITHUB_CLIENT_ID', GITHUB_CLIENT_ID),
+      client_secret: requireEnvironmentVariable('GITHUB_CLIENT_SECRET', GITHUB_CLIENT_SECRET),
       ...parameters
     }),
     signal: AbortSignal.timeout(15000)

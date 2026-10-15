@@ -5,7 +5,7 @@
  * Uses Durable Object storage in production, memory in local development.
  */
 
-import { stateMap } from './state';
+import { stateMap } from './state.ts';
 
 interface StoredToken {
   githubToken: string;

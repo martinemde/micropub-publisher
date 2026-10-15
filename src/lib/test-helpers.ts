@@ -36,3 +36,22 @@ export async function expectRedirect(promise: unknown, status: number = 302): Pr
     return e.location;
   }
 }
+
+/**
+ * Values behind the `$app/env/private` and `$app/env/public` mocks in
+ * vitest-setup.ts. Tests may reassign them; modules read them on each use.
+ */
+export const privateEnv: Record<string, string | undefined> = {
+  GITHUB_CLIENT_ID: 'test_client_id',
+  GITHUB_CLIENT_SECRET: 'test_client_secret',
+  GITHUB_OWNER: 'test_owner',
+  GITHUB_REPO: 'test_repo',
+  SESSION_SECRET: 'test_session_secret_key_for_testing_only_32_chars',
+  MICROPUB_BACKEND: 'test',
+  PUBLISHER_RUNTIME: undefined
+};
+
+export const publicEnv: Record<string, string | undefined> = {
+  PUBLIC_APP_URL: 'https://publisher.example.com',
+  PUBLIC_SITE_URL: 'https://example.com'
+};

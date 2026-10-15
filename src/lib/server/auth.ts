@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto';
 import { sealData, unsealData } from 'iron-session';
-import { env } from '$env/dynamic/private';
-import { env as publicEnv } from '$env/dynamic/public';
-import { requestUserToken, storeGithubCredential, hasGithubCredential } from './github-user-token';
+import { GITHUB_CLIENT_ID, SESSION_SECRET } from '$app/env/private';
+import { PUBLIC_APP_URL } from '$app/env/public';
+import {
+  requestUserToken,
+  storeGithubCredential,
+  hasGithubCredential
+} from './github-user-token.ts';
 import type { RequestEvent } from '@sveltejs/kit';
-import { requireEnvironmentVariable } from './env';
-import { stateMap } from './state';
+import { requireEnvironmentVariable } from './env.ts';
+import { stateMap } from './state.ts';
 
 export interface SessionData {
   user?: {
@@ -43,7 +47,7 @@ export interface AuthCode {
  * Get session options lazily to avoid accessing env vars during prerendering
  */
 function getSessionOptions() {
-  const secret = env.SESSION_SECRET;
+  const secret = SESSION_SECRET;
 
   if (!secret) {
     throw new Error('SESSION_SECRET environment variable is not set');
@@ -110,10 +114,8 @@ export function clearSession(event: RequestEvent): void {
  * Exchange OAuth code for access token
  */
 export function githubCallbackUrl(): string {
-  return new URL(
-    '/login/callback',
-    requireEnvironmentVariable('PUBLIC_APP_URL', publicEnv.PUBLIC_APP_URL)
-  ).href;
+  return new URL('/login/callback', requireEnvironmentVariable('PUBLIC_APP_URL', PUBLIC_APP_URL))
+    .href;
 }
 export async function exchangeCodeForToken(code: string, verifier?: string): Promise<string> {
   const credential = await requestUserToken({
@@ -138,7 +140,7 @@ export function generateState(): string {
  */
 export function getAuthorizationUrl(state: string, redirectUri: string, verifier?: string): string {
   const params = new URLSearchParams({
-    client_id: requireEnvironmentVariable('GITHUB_CLIENT_ID', env.GITHUB_CLIENT_ID),
+    client_id: requireEnvironmentVariable('GITHUB_CLIENT_ID', GITHUB_CLIENT_ID),
     redirect_uri: redirectUri,
     state
   });
@@ -160,7 +162,7 @@ export async function createAuthCode(data: Omit<AuthCode, 'issuedAt'>): Promise<
   };
 
   return await sealData(authCode, {
-    password: env.SESSION_SECRET!,
+    password: SESSION_SECRET!,
     ttl: 600 // 10 minutes
   });
 }
@@ -180,7 +182,7 @@ export async function verifyAuthCode(code: string): Promise<AuthCode | null> {
 
   try {
     const data = await unsealData<AuthCode>(code, {
-      password: env.SESSION_SECRET!,
+      password: SESSION_SECRET!,
       ttl: 600
     });
 

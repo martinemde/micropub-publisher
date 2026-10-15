@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { FileText, FilePenLine } from 'lucide-svelte';
-  import { untrack } from 'svelte';
-  import { browser } from '$app/environment';
+  import { FileText, FilePenLine } from '@lucide/svelte';
+  import { onMount } from 'svelte';
 
   interface BlogPostFileInfo {
     filename: string;
@@ -53,11 +52,8 @@
     }
   }
 
-  // Load posts when component mounts
-  $effect(() => {
-    if (browser) {
-      untrack(loadPosts);
-    }
+  onMount(() => {
+    loadPosts();
   });
 
   function formatDate(dateStr: string): string {

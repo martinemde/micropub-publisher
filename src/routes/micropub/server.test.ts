@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { GET, POST } from './+server';
-import { storeAccessToken } from '$lib/server/token-store';
+import { GET, POST } from './+server.ts';
+import { storeAccessToken } from '#lib/server/token-store.ts';
 import type { RequestEvent } from './$types';
-import { expectHttpError } from '$lib/test-helpers';
+import { expectHttpError } from '#lib/test-helpers.ts';
 
 // Mock dependencies (env mocks are in vitest-setup.ts)
-vi.mock('$lib/server/storage/factory', () => ({
+vi.mock('#lib/server/storage/factory.ts', () => ({
   createStorageBackend: vi.fn(() => ({
     createOrUpdateFile: vi.fn().mockResolvedValue(undefined),
     listBlogPosts: vi.fn().mockResolvedValue([]),
@@ -13,8 +13,8 @@ vi.mock('$lib/server/storage/factory', () => ({
   }))
 }));
 
-vi.mock('$lib/server/micropub', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('$lib/server/micropub')>()),
+vi.mock('#lib/server/micropub.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('#lib/server/micropub.ts')>()),
   parseMicropubRequest: vi.fn((req) => ({
     title: req.name || req.properties?.name?.[0] || 'Test Post',
     content: req.content || req.properties?.content?.[0] || 'Test content',

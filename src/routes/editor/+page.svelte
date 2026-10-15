@@ -1,17 +1,18 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import remarkHtml from 'remark-html';
   import remarkParse from 'remark-parse';
   import type { PageData } from './$types';
-  import { ImagePlus, Menu, X, Plus, Eye, PenLine, ChevronDown, LogOut } from 'lucide-svelte';
+  import { ImagePlus, Menu, X, Plus, Eye, PenLine, ChevronDown, LogOut } from '@lucide/svelte';
   import { resolve } from '$app/paths';
   import { beforeNavigate } from '$app/navigation';
   import { unified } from 'unified';
-  import { browser } from '$app/environment';
-  import BlogPostList from '$lib/components/BlogPostList.svelte';
+  import { browser } from '$app/env';
+  // Relative, not #lib: svelte-check --tsgo types #lib .svelte imports as any component.
+  import BlogPostList from '../../lib/components/BlogPostList.svelte';
 
-  import ActionLog, { type Action } from '$lib/components/ActionLog.svelte';
-  import { postTypes, inferPostType, type PostType, type Photo } from '$lib/editor/posts';
+  import ActionLog, { type Action } from '../../lib/components/ActionLog.svelte';
+  import { postTypes, inferPostType, type PostType, type Photo } from '#lib/editor/posts.ts';
 
   let { data }: { data: PageData } = $props();
 
@@ -195,10 +196,8 @@
   let previewHtml = $state('');
   let previewLoading = $state(false);
 
-  // Load draft from localStorage on mount
-  $effect(() => {
-    if (!browser) return;
-
+  // Restore the local draft backup.
+  onMount(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {

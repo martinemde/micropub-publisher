@@ -4,18 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isHttpError, isRedirect, json, type RequestEvent } from '@sveltejs/kit';
 // @ts-expect-error SvelteKit exports this test context helper without public types.
 import { with_request_store } from '@sveltejs/kit/internal/server';
-import { env } from '$env/dynamic/private';
-import { env as publicEnv } from '$env/dynamic/public';
-import { GET as login } from './routes/auth/github/login/+server';
-import { GET as logout } from './routes/auth/github/logout/+server';
-import { GET as authorize } from './routes/auth/indieauth/authorize/+server';
-import { GET as callback } from './routes/login/callback/+server';
-import { POST as exchange } from './routes/auth/indieauth/token/+server';
-import { handle } from './hooks.server';
-import { GET, POST } from './routes/micropub/+server';
-import { POST as upload } from './routes/micropub/media/+server';
-import { setSession } from '$lib/server/auth';
-import { clearAllTokens, storeAccessToken } from '$lib/server/token-store';
+import { GET as login } from './routes/auth/github/login/+server.ts';
+import { GET as logout } from './routes/auth/github/logout/+server.ts';
+import { GET as authorize } from './routes/auth/indieauth/authorize/+server.ts';
+import { GET as callback } from './routes/login/callback/+server.ts';
+import { POST as exchange } from './routes/auth/indieauth/token/+server.ts';
+import { handle } from './hooks.server.ts';
+import { GET, POST } from './routes/micropub/+server.ts';
+import { POST as upload } from './routes/micropub/media/+server.ts';
+import { setSession } from '#lib/server/auth.ts';
+import { clearAllTokens, storeAccessToken } from '#lib/server/token-store.ts';
+import { privateEnv, publicEnv } from '#lib/test-helpers.ts';
 import matter from 'gray-matter';
 
 // Fake GitHub at the external API boundary; keep the storage implementation real.
@@ -63,7 +62,7 @@ beforeEach(() => {
   clearAllTokens();
   githubWrites.clear();
   githubAuthentications.length = 0;
-  env.MICROPUB_BACKEND = 'test';
+  privateEnv.MICROPUB_BACKEND = 'test';
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => {
@@ -140,7 +139,7 @@ async function request(
 
 describe('Micropub authorization and actions', () => {
   beforeEach(() => {
-    env.MICROPUB_BACKEND = 'github';
+    privateEnv.MICROPUB_BACKEND = 'github';
   });
   it.each(['', 'update', 'delete', 'recreate'])('rejects create with scope %j', async (scope) => {
     const restricted = storeAccessToken('fake-github-token', 'https://example.com/', scope);
@@ -448,7 +447,7 @@ describe('Requested scope survives authorization and token exchange', () => {
     ['', ''],
     ['recreate', '']
   ])('requests %j and grants %j', async (requested, granted) => {
-    env.MICROPUB_BACKEND = 'github';
+    privateEnv.MICROPUB_BACKEND = 'github';
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
@@ -505,7 +504,7 @@ describe('Requested scope survives authorization and token exchange', () => {
 
 describe('Stored Micropub lifecycle through the app boundary', () => {
   beforeEach(() => {
-    env.MICROPUB_BACKEND = 'github';
+    privateEnv.MICROPUB_BACKEND = 'github';
   });
   const send = async (body: object, bearer: string) =>
     (
@@ -784,7 +783,7 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
 
 describe('Publishing workflow extensions', () => {
   beforeEach(() => {
-    env.MICROPUB_BACKEND = 'github';
+    privateEnv.MICROPUB_BACKEND = 'github';
   });
   it.each(['form', 'json'])(
     'creates a draft bookmark with an mp-slug via %s and publishes it by update',
@@ -902,7 +901,7 @@ describe('Publishing workflow extensions', () => {
 });
 
 it('keeps concurrent creates from overwriting the same slug', async () => {
-  env.MICROPUB_BACKEND = 'github';
+  privateEnv.MICROPUB_BACKEND = 'github';
   const responses = await Promise.all(
     ['first', 'second', 'third'].map((content) =>
       request('/micropub', {
@@ -928,7 +927,7 @@ describe('GitHub App user authorization for production', () => {
   const production = 'https://publish.martinemde.com';
   async function authorizeClient() {
     publicEnv.PUBLIC_APP_URL = production;
-    env.MICROPUB_BACKEND = 'github';
+    privateEnv.MICROPUB_BACKEND = 'github';
     const params = new URLSearchParams({
       me: 'https://example.com/',
       client_id: client,
@@ -1062,7 +1061,7 @@ describe('GitHub App user authorization for production', () => {
 it.each(['?code=installation-code', '?installation_id=123&setup_action=install', ''])(
   'starts a fresh login for an installation callback without state: %s',
   async (query) => {
-    env.MICROPUB_BACKEND = 'github';
+    privateEnv.MICROPUB_BACKEND = 'github';
     const exchangeRequests: Record<string, string>[] = [];
     vi.stubGlobal(
       'fetch',
