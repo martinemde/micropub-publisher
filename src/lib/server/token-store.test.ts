@@ -5,7 +5,7 @@ import {
   revokeAccessToken,
   cleanupExpiredTokens,
   clearAllTokens
-} from './token-store';
+} from './token-store.ts';
 
 describe('Token Store', () => {
   beforeEach(() => {

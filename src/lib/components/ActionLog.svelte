@@ -1,4 +1,4 @@
-<script lang="ts">
+<script lang="ts" module>
   export interface Action {
     id: number;
     time: string;
@@ -10,6 +10,9 @@
     status?: number;
     error?: string;
   }
+</script>
+
+<script lang="ts">
   let { actions, onClear }: { actions: Action[]; onClear: () => void } = $props();
 </script>
 

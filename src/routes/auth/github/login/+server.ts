@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
-import { env } from '$env/dynamic/public';
-import { generateState, getAuthorizationUrl, getSession, setSession } from '$lib/server/auth';
-import { requireEnvironmentVariable } from '$lib/server/env';
+import { PUBLIC_APP_URL } from '$app/env/public';
+import { generateState, getAuthorizationUrl, getSession, setSession } from '#lib/server/auth.ts';
+import { requireEnvironmentVariable } from '#lib/server/env.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {
@@ -26,12 +26,12 @@ export const GET: RequestHandler = async (event) => {
   });
 
   // Build redirect URI for GitHub OAuth
-  const publisherUrl = requireEnvironmentVariable('PUBLIC_APP_URL', env.PUBLIC_APP_URL);
+  const publisherUrl = requireEnvironmentVariable('PUBLIC_APP_URL', PUBLIC_APP_URL);
   const redirectUri = `${publisherUrl}/login/callback`;
 
   // Get GitHub OAuth URL
   const authUrl = getAuthorizationUrl(state, redirectUri, oauthVerifier);
 
   // Redirect to GitHub
-  redirect(302, authUrl);
+  redirect(302, authUrl, { external: ['https://github.com'] });
 };

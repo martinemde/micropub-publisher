@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
-import { verifyAuthCode, verifyCodeChallenge } from '$lib/server/auth';
-import { storeAccessToken } from '$lib/server/token-store';
+import { verifyAuthCode, verifyCodeChallenge } from '#lib/server/auth.ts';
+import { storeAccessToken } from '#lib/server/token-store.ts';
 import type { RequestHandler } from './$types';
 
 /**

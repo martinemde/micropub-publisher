@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { isDeepStrictEqual } from 'node:util';
-import { env } from '$env/dynamic/public';
-import { requireEnvironmentVariable } from './env';
+import { PUBLIC_SITE_URL } from '$app/env/public';
+import { requireEnvironmentVariable } from './env.ts';
 import {
   invalid,
   readProperties,
@@ -11,10 +11,10 @@ import {
   siteDateParts,
   type BlogPost,
   type MicropubProperties
-} from './micropub';
-import type { StorageBackend } from './storage/types';
+} from './micropub.ts';
+import type { StorageBackend } from './storage/types.ts';
 
-const siteUrl = () => requireEnvironmentVariable('PUBLIC_SITE_URL', env.PUBLIC_SITE_URL);
+const siteUrl = () => requireEnvironmentVariable('PUBLIC_SITE_URL', PUBLIC_SITE_URL);
 /** Permalinks are nested by the site's calendar day: /2026/07/21/134309 */
 export function postUrl(post: Pick<BlogPost, 'date' | 'slug'>): string {
   return `${siteUrl()}/${siteDateParts(post.date).day.replaceAll('-', '/')}/${post.slug}`;
@@ -37,7 +37,7 @@ export async function findPost(backend: StorageBackend, target: unknown) {
   const files = (await backend.listBlogPosts()).filter(
     (post) => post.slug === slug && (!day || post.date === day)
   );
-  if (!files.length) error(404, { message: 'Post not found', error: 'invalid_request' });
+  if (!files.length) error(404, 'Post not found', { error: 'invalid_request' });
   if (files.length > 1) invalid('Ambiguous post URL');
   return files[0];
 }

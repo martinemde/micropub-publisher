@@ -1,5 +1,5 @@
 import { json, error, isHttpError } from '@sveltejs/kit';
-import { createStorageBackend } from '$lib/server/storage/factory';
+import { createStorageBackend } from '#lib/server/storage/factory.ts';
 import type { RequestHandler } from './$types';
 
 /**

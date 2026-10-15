@@ -1,7 +1,7 @@
 import { error, redirect } from '@sveltejs/kit';
-import { env } from '$env/dynamic/public';
-import { generateState, getAuthorizationUrl, getSession, setSession } from '$lib/server/auth';
-import { requireEnvironmentVariable } from '$lib/server/env';
+import { PUBLIC_APP_URL, PUBLIC_SITE_URL } from '$app/env/public';
+import { generateState, getAuthorizationUrl, getSession, setSession } from '#lib/server/auth.ts';
+import { requireEnvironmentVariable } from '#lib/server/env.ts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -49,7 +49,7 @@ export const GET: RequestHandler = async (event) => {
   }
 
   // The publisher may live on a different origin from the site it represents.
-  const siteUrl = new URL(requireEnvironmentVariable('PUBLIC_SITE_URL', env.PUBLIC_SITE_URL));
+  const siteUrl = new URL(requireEnvironmentVariable('PUBLIC_SITE_URL', PUBLIC_SITE_URL));
   const meUrl = new URL(me);
 
   if (meUrl.origin !== siteUrl.origin) {
@@ -140,10 +140,10 @@ export const GET: RequestHandler = async (event) => {
   });
 
   // Build GitHub OAuth URL
-  const publisherUrl = requireEnvironmentVariable('PUBLIC_APP_URL', env.PUBLIC_APP_URL);
+  const publisherUrl = requireEnvironmentVariable('PUBLIC_APP_URL', PUBLIC_APP_URL);
   const githubCallbackUri = `${publisherUrl}/login/callback`;
   const authUrl = getAuthorizationUrl(oauthState, githubCallbackUri, oauthVerifier);
 
   // Redirect to GitHub for authentication
-  redirect(302, authUrl);
+  redirect(302, authUrl, { external: ['https://github.com'] });
 };

@@ -1,46 +1,12 @@
 // Vitest setup file for test configuration
 import { vi } from 'vitest';
 
-// Mock SvelteKit environment modules globally
-// These virtual modules are provided by SvelteKit but need to be mocked in tests
+// Mock SvelteKit's virtual app modules globally. Environment values live in
+// test-helpers.ts so individual tests can change them.
+vi.mock('$app/env/private', async () => (await import('#lib/test-helpers.ts')).privateEnv);
+vi.mock('$app/env/public', async () => (await import('#lib/test-helpers.ts')).publicEnv);
 
-// Private environment variables (server-side only)
-vi.mock('$env/dynamic/private', () => ({
-  env: {
-    GITHUB_CLIENT_ID: 'test_client_id',
-    GITHUB_CLIENT_SECRET: 'test_client_secret',
-    GITHUB_OWNER: 'test_owner',
-    GITHUB_REPO: 'test_repo',
-    SESSION_SECRET: 'test_session_secret_key_for_testing_only_32_chars',
-    MICROPUB_BACKEND: 'test'
-  }
-}));
-
-// Public environment variables (available to client)
-vi.mock('$env/dynamic/public', () => ({
-  env: {
-    PUBLIC_APP_URL: 'https://publisher.example.com',
-    PUBLIC_SITE_URL: 'https://example.com'
-  }
-}));
-
-// Static environment variables (build-time)
-vi.mock('$env/static/private', () => ({
-  GITHUB_CLIENT_ID: 'test_client_id',
-  GITHUB_CLIENT_SECRET: 'test_client_secret',
-  GITHUB_OWNER: 'test_owner',
-  GITHUB_REPO: 'test_repo',
-  SESSION_SECRET: 'test_session_secret_key_for_testing_only_32_chars',
-  MICROPUB_BACKEND: 'test'
-}));
-
-vi.mock('$env/static/public', () => ({
-  PUBLIC_APP_URL: 'https://publisher.example.com',
-  PUBLIC_SITE_URL: 'https://example.com'
-}));
-
-// Mock SvelteKit app environment
-vi.mock('$app/environment', () => ({
+vi.mock('$app/env', () => ({
   dev: true,
   browser: false,
   building: false,

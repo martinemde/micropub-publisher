@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { TestStorageBackend } from './test';
-import { FileStorageBackend } from './file';
+import { TestStorageBackend } from './test.ts';
+import { FileStorageBackend } from './file.ts';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -236,7 +236,7 @@ describe('createStorageBackend (factory)', () => {
   describe('environment variable override', () => {
     it('should create test backend when MICROPUB_BACKEND=test', async () => {
       // The global mock sets MICROPUB_BACKEND=test
-      const { createStorageBackend } = await import('./factory');
+      const { createStorageBackend } = await import('./factory.ts');
       const backend = createStorageBackend();
 
       expect(backend).toBeInstanceOf(TestStorageBackend);

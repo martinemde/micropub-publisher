@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
-import { revokeGithubCredential } from '$lib/server/github-user-token';
-import { clearSession } from '$lib/server/auth';
-import { revokeTokensByGithubToken } from '$lib/server/token-store';
+import { revokeGithubCredential } from '#lib/server/github-user-token.ts';
+import { clearSession } from '#lib/server/auth.ts';
+import { revokeTokensByGithubToken } from '#lib/server/token-store.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async (event) => {

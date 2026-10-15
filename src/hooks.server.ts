@@ -1,6 +1,6 @@
-import { getSession } from '$lib/server/auth';
-import { sequence } from '@sveltejs/kit/hooks';
-import { json, text, type Handle } from '@sveltejs/kit';
+import { getSession } from '#lib/server/auth.ts';
+import { sequence, type Handle } from '@sveltejs/kit/hooks';
+import { json, text } from '@sveltejs/kit';
 
 const micropubPaths = ['/micropub', '/micropub/media'];
 const protocolPaths = ['/auth/indieauth/token', ...micropubPaths];

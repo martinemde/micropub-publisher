@@ -1,7 +1,7 @@
-import { resolveGithubToken } from './github-user-token';
+import { resolveGithubToken } from './github-user-token.ts';
 import { Octokit } from '@octokit/rest';
-import { env } from '$env/dynamic/private';
-import { hasHttpStatus } from './storage/types';
+import { GITHUB_OWNER, GITHUB_REPO } from '$app/env/private';
+import { hasHttpStatus } from './storage/types.ts';
 
 /**
  * Get authenticated user information from GitHub
@@ -32,8 +32,8 @@ export async function getGitHubUser(token: string) {
 export async function verifyRepoOwnership(token: string, username: string): Promise<boolean> {
   const octokit = new Octokit({ auth: await resolveGithubToken(token) });
 
-  const owner = env.GITHUB_OWNER;
-  const repo = env.GITHUB_REPO || `${owner}.github.io`;
+  const owner = GITHUB_OWNER;
+  const repo = GITHUB_REPO || `${owner}.github.io`;
 
   if (!owner) {
     throw new Error('GITHUB_OWNER environment variable is required');

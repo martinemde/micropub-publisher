@@ -102,7 +102,7 @@ pnpm run dev
 
 ```typescript
 // Unit test example
-import { TestStorageBackend } from '$lib/server/storage/test';
+import { TestStorageBackend } from '#lib/server/storage/test.ts';
 
 const backend = new TestStorageBackend();
 await backend.createOrUpdateFile('test.md', 'content', 'message');

@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import type { BeforeNavigate } from '@sveltejs/kit';
+import type { BeforeNavigate } from '$app/navigation';
 import { mount, unmount, flushSync } from 'svelte';
 import Editor from './+page.svelte';
 import matter from 'gray-matter';
-import { TestStorageBackend } from '$lib/server/storage/test';
-import { mutatePost } from '$lib/server/micropub-posts';
-import { env } from '$env/dynamic/public';
+import { TestStorageBackend } from '#lib/server/storage/test.ts';
+import { mutatePost } from '#lib/server/micropub-posts.ts';
+import { publicEnv } from '#lib/test-helpers.ts';
 
-vi.mock('$app/environment', () => ({ browser: true, dev: true, building: false }));
+vi.mock('$app/env', () => ({ browser: true, dev: true, building: false }));
 
 const { beforeNavigate } = vi.hoisted(() => ({
   beforeNavigate: vi.fn<(callback: (navigation: BeforeNavigate) => void) => void>()
@@ -21,7 +21,7 @@ afterEach(async () => {
   document.body.replaceChildren();
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  env.PUBLIC_SITE_URL = 'https://example.com';
+  publicEnv.PUBLIC_SITE_URL = 'https://example.com';
 });
 
 test.each([
@@ -879,7 +879,7 @@ test('follows a post to its new permalink when an update moves it', async () => 
 test.each(['loaded', 'normalized input', 'draft reload', 'old draft'])(
   'keeps a legacy date-only permalink through an editor content edit: %s',
   async (scenario) => {
-    env.PUBLIC_SITE_URL = 'https://blog.example';
+    publicEnv.PUBLIC_SITE_URL = 'https://blog.example';
     const storage = memoryStorage();
     const backend = new TestStorageBackend();
     const path = 'src/content/blog/2025-12-19-legacy.md';

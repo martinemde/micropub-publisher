@@ -1,7 +1,7 @@
 import { error, isHttpError } from '@sveltejs/kit';
-import { createStorageBackend } from '$lib/server/storage/factory';
-import { requireMicropubToken } from '$lib/server/micropub-auth';
-import { uploadPhoto } from '$lib/server/micropub-media';
+import { createStorageBackend } from '#lib/server/storage/factory.ts';
+import { requireMicropubToken } from '#lib/server/micropub-auth.ts';
+import { uploadPhoto } from '#lib/server/micropub-media.ts';
 import type { RequestHandler } from './$types';
 
 /**

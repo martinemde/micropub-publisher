@@ -61,6 +61,21 @@ The published site's identity page must advertise the standalone endpoints:
 <link rel="micropub" href="https://publish.martinemde.com/micropub" />
 ```
 
+## Code conventions
+
+SvelteKit 3 options, including the adapter and CSRF policy, are passed to
+`sveltekit(...)` in `vite.config.ts`; there is no `svelte.config.js`. Environment
+variables are declared in `src/env.ts` and imported from `$app/env/private` or
+`$app/env/public`; tests change them through `privateEnv` and `publicEnv` in
+`src/lib/test-helpers.ts`. Import library modules as `#lib/…` with explicit file
+extensions. Import `.svelte` components by relative path instead, because
+`svelte-check --tsgo` does not type-check props through `#lib`.
+
+`scripts/cloudflare-adapter.mjs` wraps the adapter's Worker in
+`scripts/cloudflare-worker.mjs`, which routes every request through one Durable
+Object. Adapter 8 passes no per-request `platform`, so that object registers its
+storage on `globalThis` for `src/lib/server/state.ts`.
+
 ## Verify
 
 ```sh

@@ -1,10 +1,10 @@
-import { resolveGithubToken } from '../github-user-token';
+import { resolveGithubToken } from '../github-user-token.ts';
 import { isHttpError } from '@sveltejs/kit';
 import { Octokit } from '@octokit/rest';
-import { env } from '$env/dynamic/private';
-import { env as publicEnv } from '$env/dynamic/public';
-import { hasHttpStatus, type StorageBackend, type BlogPostFileInfo } from './types';
-import { requireEnvironmentVariable } from '../env';
+import { GITHUB_OWNER, GITHUB_REPO } from '$app/env/private';
+import { PUBLIC_SITE_URL } from '$app/env/public';
+import { hasHttpStatus, type StorageBackend, type BlogPostFileInfo } from './types.ts';
+import { requireEnvironmentVariable } from '../env.ts';
 
 /**
  * GitHub-based storage backend for production
@@ -44,8 +44,8 @@ export class GitHubStorageBackend implements StorageBackend {
     this.token = token;
 
     // Get repository configuration from environment variables
-    const owner = env.GITHUB_OWNER;
-    const repo = env.GITHUB_REPO;
+    const owner = GITHUB_OWNER;
+    const repo = GITHUB_REPO;
 
     if (!owner) {
       throw new Error('GITHUB_OWNER environment variable is required');
@@ -166,7 +166,7 @@ export class GitHubStorageBackend implements StorageBackend {
       });
 
       // Get public URL from environment
-      const baseUrl = requireEnvironmentVariable('PUBLIC_SITE_URL', publicEnv.PUBLIC_SITE_URL);
+      const baseUrl = requireEnvironmentVariable('PUBLIC_SITE_URL', PUBLIC_SITE_URL);
       const publicUrl = `${baseUrl}/images/blog/${filename}`;
 
       return publicUrl;

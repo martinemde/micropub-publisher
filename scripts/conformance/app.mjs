@@ -8,7 +8,6 @@ await mkdir(runDir, { recursive: true });
 for (const file of [
   'src',
   'static',
-  'svelte.config.js',
   'scripts/cloudflare-adapter.mjs',
   'vite.config.ts',
   'tsconfig.json',
@@ -34,7 +33,10 @@ const vite = await createServer({
   logLevel: 'warn'
 });
 await vite.listen();
-const { storeAccessToken } = await vite.ssrLoadModule('/src/lib/server/token-store.ts');
+// SvelteKit serves requests through this runner; share its token store instance.
+const { storeAccessToken } = await vite.environments.ssr.runner.import(
+  '/src/lib/server/token-store.ts'
+);
 const tokens = {
   create: storeAccessToken(
     'local-fake-github-token',

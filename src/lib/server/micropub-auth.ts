@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { getAccessToken } from './token-store';
+import { getAccessToken } from './token-store.ts';
 
 /** Explicit protocol credentials take precedence over the editor session. */
 export function requireMicropubToken(
@@ -33,11 +33,10 @@ export function requireMicropubToken(
 
   const token = tokenId ? getAccessToken(tokenId) : null;
   if (!token) {
-    error(401, { message: 'Unauthorized', error: 'unauthorized' });
+    error(401, 'Unauthorized', { error: 'unauthorized' });
   }
   if (requiredScope && !token.scope.split(' ').includes(requiredScope)) {
-    error(401, {
-      message: `Token requires ${requiredScope} scope`,
+    error(401, `Token requires ${requiredScope} scope`, {
       error: 'insufficient_scope',
       scope: requiredScope
     });

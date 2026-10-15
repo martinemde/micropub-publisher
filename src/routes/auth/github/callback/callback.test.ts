@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { isHttpError, isRedirect } from '@sveltejs/kit';
-import { GET } from './+server';
+import { GET } from './+server.ts';
 import type { RequestEvent, RequestEvent as FullRequestEvent } from './$types';
-import * as auth from '$lib/server/auth';
-import * as githubAuth from '$lib/server/github-auth';
-import { expectHttpError, expectRedirect } from '$lib/test-helpers';
+import * as auth from '#lib/server/auth.ts';
+import * as githubAuth from '#lib/server/github-auth.ts';
+import { expectHttpError, expectRedirect } from '#lib/test-helpers.ts';
 
 // Session data type for OAuth flows
 interface MockSessionData {
@@ -22,8 +22,8 @@ interface MockSessionData {
 }
 
 // Mock the auth and github-auth modules
-vi.mock('$lib/server/auth', async () => {
-  const actual = await vi.importActual('$lib/server/auth');
+vi.mock('#lib/server/auth.ts', async () => {
+  const actual = await vi.importActual('#lib/server/auth.ts');
   return {
     ...actual,
     exchangeCodeForToken: vi.fn(),
@@ -31,7 +31,7 @@ vi.mock('$lib/server/auth', async () => {
   };
 });
 
-vi.mock('$lib/server/github-auth', () => ({
+vi.mock('#lib/server/github-auth.ts', () => ({
   getGitHubUser: vi.fn(),
   verifyRepoOwnership: vi.fn()
 }));

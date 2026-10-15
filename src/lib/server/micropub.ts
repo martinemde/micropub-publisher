@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import matter from 'gray-matter';
-import { env } from '$env/dynamic/private';
-import { requireEnvironmentVariable } from './env';
+import { GITHUB_OWNER } from '$app/env/private';
+import { requireEnvironmentVariable } from './env.ts';
 
 export type MicropubProperties = Record<string, unknown[]>;
 export interface MicropubRequest {
@@ -30,7 +30,7 @@ const reserved = new Set([
   'delete'
 ]);
 export function invalid(message: string): never {
-  error(400, { message, error: 'invalid_request' });
+  error(400, message, { error: 'invalid_request' });
 }
 export function normalizeProperties(input: Record<string, unknown>): MicropubProperties {
   return Object.fromEntries(
@@ -164,7 +164,7 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
     date,
     published: postStatus === 'published',
     description: first(properties, 'description') || undefined,
-    author: requireEnvironmentVariable('GITHUB_OWNER', env.GITHUB_OWNER),
+    author: requireEnvironmentVariable('GITHUB_OWNER', GITHUB_OWNER),
     categories: properties.category?.filter((value): value is string => typeof value === 'string'),
     properties
   };
