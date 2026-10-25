@@ -27,10 +27,7 @@ export function createJudge(appDir, fixtureDir) {
           'utf8'
         )
       );
-      assert(
-        matter(archive.content).data.micropub.properties.content?.length,
-        'Recovery copy must contain original content'
-      );
+      assert(matter(archive.content).content.trim(), 'Recovery copy must contain original content');
       deleted.set(number, archive.content);
       return 'Post file is absent from blog content; original content exists in the recovery archive.';
     }
@@ -40,9 +37,17 @@ export function createJudge(appDir, fixtureDir) {
       assert.equal(source, deleted.get(number), 'Restoration must preserve every byte');
       return 'Restored post exactly matches the archived original.';
     }
+    // Properties are top-level front matter under their Micropub names, single
+    // values as scalars; the body is the content (HTML when marked text/html).
     const { data, content } = matter(source);
-    assert.equal(data.published, true, 'Default posts must be marked published for the blog');
-    const properties = data.micropub.properties;
+    assert.notEqual(data['post-status'], 'draft', 'Default posts must be published for the blog');
+    const properties = Object.fromEntries(
+      Object.entries(data)
+        .filter(([key]) => key !== 'content-type')
+        .map(([key, value]) => [key, Array.isArray(value) ? value : [value]])
+    );
+    const body = content.replace(/^\n/, '').trimEnd();
+    if (body) properties.content = [data['content-type'] === 'text/html' ? { html: body } : body];
     const initial = creation.request;
     let expected;
     if (initial.method === 'postjson') expected = JSON.parse(initial.body).properties;
@@ -72,9 +77,9 @@ export function createJudge(appDir, fixtureDir) {
       assert.deepEqual(properties[key], value, `Stored ${key} must match submitted values`);
     assert(!Object.hasOwn(properties, 'access_token'));
     assert.deepEqual(
-      data.categories ?? [],
+      data.category ?? [],
       expected.category ?? [],
-      'Blog categories must reflect source'
+      'Blog categories must be a list'
     );
     if (!expected.category) assert(!Object.hasOwn(properties, 'category'));
     const originalContent = expected.content?.[0];
@@ -82,34 +87,16 @@ export function createJudge(appDir, fixtureDir) {
       typeof originalContent === 'string'
         ? originalContent
         : (originalContent?.html ?? originalContent?.text);
-    assert(
-      // Photos render above the caption, so the text follows any leading images.
-      content
-        .trim()
-        .replace(/^(<img\b[^>]*>\s*)+/, '')
-        .startsWith(text?.trim() ?? ''),
-      'Published content must retain submitted text/HTML'
-    );
+    // The body is the submitted content; photos stay properties the blog renders.
+    assert.equal(body, text?.trim() ?? '', 'Published content must retain submitted text/HTML');
     const dom = new JSDOM(content);
     try {
       if (id === 'passed_html') {
         assert(dom.window.document.querySelector('b, strong'), 'Bold HTML must be preserved');
         assert(dom.window.document.querySelector('i, em'), 'Italic HTML must be preserved');
       }
-      if (properties.photo) {
-        const images = [...dom.window.document.querySelectorAll('img')];
-        assert.equal(images.length, properties.photo.length, 'Every photo must be rendered');
-        for (const [i, photo] of properties.photo.entries()) {
-          assert.equal(
-            images[i].getAttribute('src'),
-            typeof photo === 'string' ? photo : photo.value
-          );
-          assert.equal(
-            images[i].getAttribute('alt'),
-            typeof photo === 'string' ? '' : (photo.alt ?? '')
-          );
-        }
-      }
+      if (properties.photo)
+        assert(Array.isArray(data.photo), 'Photos must be a list the blog can render');
       if (initial.method === 'multipart') {
         const names = Object.values(initial.files).flat();
         assert.equal(properties.photo.length, names.length);
@@ -125,6 +112,6 @@ export function createJudge(appDir, fixtureDir) {
     } finally {
       dom.window.close();
     }
-    return `Verified ${files[0]}: submitted properties, blog categories, content/HTML and photo URLs/alt text${initial.method === 'multipart' ? ', including original uploaded bytes' : ''}.`;
+    return `Verified ${files[0]}: submitted properties, blog categories, content/HTML and photo properties${initial.method === 'multipart' ? ', including original uploaded bytes' : ''}.`;
   };
 }

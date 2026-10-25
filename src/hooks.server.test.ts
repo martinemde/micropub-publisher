@@ -524,7 +524,7 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     expect(githubWrites.size).toBe(2);
     const url = first.headers.get('Location');
     const originalDate = matter(Buffer.from([...githubWrites.values()][0], 'base64').toString())
-      .data.date;
+      .data.published;
     for (const action of ['update', 'delete', 'undelete']) {
       const rejected = await send({ action, url, replace: { content: ['Changed'] } }, token);
       expect(rejected.status).toBe(401);
@@ -549,7 +549,9 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
       name: ['A post'],
       content: ['Changed'],
       category: ['a', 'c'],
-      published: [originalDate]
+      published: [originalDate],
+      author: ['test_owner'],
+      slug: ['a-post']
     });
     const before = new Map(githubWrites);
     expect((await send({ action: 'delete', url }, editor)).status).toBe(204);
@@ -574,11 +576,8 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     expect(response.status).toBe(201);
     const source = Buffer.from([...githubWrites.values()][0], 'base64').toString();
     const parsed = matter(source);
-    expect(parsed.data.categories).toEqual(['one, two', 'key: value']);
-    expect(parsed.data.micropub.properties).toEqual({
-      content: ['Body'],
-      category: ['one, two', 'key: value']
-    });
+    expect(parsed.data.category).toEqual(['one, two', 'key: value']);
+    expect(parsed.content.trim()).toBe('Body');
     expect(source).not.toContain(token);
   });
   it('reuses a slug on another day and still finds posts by legacy /blog/ URLs', async () => {
@@ -635,7 +634,7 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     const source = matter(
       Buffer.from(githubWrites.get('src/content/blog/2026-07-23-second.md')!, 'base64').toString()
     );
-    expect(source.data).toMatchObject({ title: 'Renamed title', slug: 'second' });
+    expect(source.data).toMatchObject({ name: 'Renamed title', slug: 'second' });
   });
   it('refuses to move a post onto another permalink', async () => {
     const editor = storeAccessToken('fake', 'https://example.com/', 'update');
@@ -677,19 +676,20 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     const url = created.headers.get('Location')!;
     const path = 'src/content/blog/2026-07-21-134309.md';
     const original = matter(Buffer.from(githubWrites.get(path)!, 'base64').toString());
-    expect(original.data.micropub.properties.published).toBeUndefined();
+    // The implicit publication time is stored like any other published value.
+    expect(original.data.published).toBe('2026-07-21T20:43:09.000Z');
     const editor = storeAccessToken('fake', 'https://example.com/', 'update');
     vi.setSystemTime(new Date('2026-07-22T20:43:09Z'));
     const query = await request(`/micropub?${new URLSearchParams({ q: 'source', url })}`, {
       headers: { Authorization: `Bearer ${editor}` }
     });
-    expect((await query.response.json()).properties.published).toEqual([original.data.date]);
+    expect((await query.response.json()).properties.published).toEqual([original.data.published]);
     const updated = await send({ action: 'update', url, replace: { content: ['Edited'] } }, editor);
     expect(updated.status).toBe(204);
     expect(updated.headers.has('Location')).toBe(false);
     expect([...githubWrites.keys()]).toEqual([path]);
     const saved = matter(Buffer.from(githubWrites.get(path)!, 'base64').toString());
-    expect(saved.data.date).toBe(original.data.date);
+    expect(saved.data.published).toBe(original.data.published);
     expect(saved.content.trim()).toBe('Edited');
   });
   it('restores a post deleted through its legacy URL byte for byte', async () => {
@@ -748,7 +748,7 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     );
     expect((await send({ action: 'undelete', url }, editor)).status).toBe(400);
   });
-  it('puts photos above the caption so they lead the post', async () => {
+  it('keeps photos as properties and the caption as the body', async () => {
     await send(
       {
         properties: {
@@ -762,9 +762,11 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
       token
     );
     const source = matter(Buffer.from([...githubWrites.values()][0], 'base64').toString());
-    expect(source.content.trim()).toBe(
-      '<img src="https://example.com/one.png" alt="One" />\n\n<img src="https://example.com/two.png" alt="" />\n\nA caption'
-    );
+    expect(source.data.photo).toEqual([
+      { value: 'https://example.com/one.png', alt: 'One' },
+      'https://example.com/two.png'
+    ]);
+    expect(source.content.trim()).toBe('A caption');
   });
   it('rejects invalid updates without modifying any files', async () => {
     const created = await send({ properties: { content: ['Keep me'] } }, token);
@@ -812,11 +814,16 @@ describe('Publishing workflow extensions', () => {
       expect(response.status).toBe(201);
       expect(response.headers.get('Location')).toBe('https://example.com/2026/07/21/my-bookmark');
       const source = matter(Buffer.from([...githubWrites.values()][0], 'base64').toString());
-      expect(source.data.published).toBe(false);
-      expect(source.data.micropub.properties).toEqual({ ...props, 'mp-slug': ['my-bookmark'] });
-      expect(source.content.trim()).toBe(
-        'Read this\n\n<a class="u-bookmark-of" href="https://example.org/page?a=1&amp;b=2">https://example.org/page?a=1&amp;b=2</a>'
-      );
+      expect(source.data['post-status']).toBe('draft');
+      expect(source.data).toMatchObject({
+        name: 'Useful reference',
+        category: ['reading'],
+        'bookmark-of': 'https://example.org/page?a=1&b=2',
+        'mp-slug': 'my-bookmark',
+        published: '2026-07-22T03:00:00Z',
+        slug: 'my-bookmark'
+      });
+      expect(source.content.trim()).toBe('Read this');
       const editor = storeAccessToken('fake', 'https://example.com/', 'update');
       const updated = await request('/micropub', {
         method: 'POST',
@@ -829,8 +836,8 @@ describe('Publishing workflow extensions', () => {
       });
       expect(updated.response.status).toBe(204);
       expect(
-        matter(Buffer.from([...githubWrites.values()][0], 'base64').toString()).data.published
-      ).toBe(true);
+        matter(Buffer.from([...githubWrites.values()][0], 'base64').toString()).data['post-status']
+      ).toBe('published');
     }
   );
   it.each([
@@ -915,10 +922,7 @@ it('keeps concurrent creates from overwriting the same slug', async () => {
   expect(new Set(responses.map(({ response }) => response.headers.get('Location'))).size).toBe(3);
   expect(
     [...githubWrites.values()]
-      .map(
-        (value) =>
-          matter(Buffer.from(value, 'base64').toString()).data.micropub.properties.content[0]
-      )
+      .map((value) => matter(Buffer.from(value, 'base64').toString()).content.trim())
       .sort()
   ).toEqual(['first', 'second', 'third']);
 });

@@ -124,6 +124,7 @@ MICROPUB_BACKEND=file
 # GitHub backend configuration (required for production)
 GITHUB_OWNER=your_github_username
 GITHUB_REPO=your_repository_name  # Optional, defaults to OWNER.github.io
+AUTHOR_NAME="Your Name"  # Optional post author, defaults to GITHUB_OWNER
 ```
 
 ## Using Micropub Clients

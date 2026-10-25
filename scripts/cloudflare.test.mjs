@@ -249,18 +249,10 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
     const savedPost = matter(createdPost);
     expect(savedPost.content).toBe('A diagnostic post\n');
     expect(savedPost.data).toEqual({
-      date: '2026-10-03T20:00:00Z',
+      published: '2026-10-03T20:00:00Z',
       author: 'tester',
-      published: true,
       slug: 'diagnostic-post',
-      micropub: {
-        type: ['h-entry'],
-        properties: {
-          content: ['A diagnostic post'],
-          'mp-slug': ['diagnostic-post'],
-          published: ['2026-10-03T20:00:00Z']
-        }
-      }
+      'mp-slug': 'diagnostic-post'
     });
 
     const media = new FormData();
