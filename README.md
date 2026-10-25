@@ -36,8 +36,7 @@ and `photo` stay lists); reading wraps it back in an array. The body is the
 `content`, exactly; `content-type: text/html` marks a body submitted as
 `content.html`. Photos and bookmarks are not copied into the body: the blog
 renders them from `photo` and `bookmark-of`. `src/lib/post-properties.ts` reads
-this format, and still reads files written with the older `micropub:` block or
-`title`/`date`/`description` wrapper keys.
+this format, and only this format.
 
 Expand entries in the editor's **Action log** to inspect the actual request body,
 HTTP status, response body, and `Location` header. All four composers create

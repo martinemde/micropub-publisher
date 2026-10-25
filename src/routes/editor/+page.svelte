@@ -28,7 +28,6 @@
     content: string;
     slug: string;
     summary?: string;
-    description?: string; // Older local drafts
     featured?: string;
     updatedAt?: string;
     visibility?: string;
@@ -210,7 +209,7 @@
         title = draft.title;
         content = draft.content;
         slug = draft.slug;
-        summary = draft.summary ?? draft.description ?? '';
+        summary = draft.summary ?? '';
         featured = draft.featured ?? '';
         updatedAt = draft.updatedAt ?? '';
         visibility = draft.visibility ?? '';
@@ -330,7 +329,7 @@
     bookmark = draft?.bookmark ?? '';
     photos = draft?.photos ?? [];
     slug = draft?.slug ?? '';
-    summary = draft?.summary ?? draft?.description ?? '';
+    summary = draft?.summary ?? '';
     featured = draft?.featured ?? '';
     updatedAt = draft?.updatedAt ?? '';
     visibility = draft?.visibility ?? '';
@@ -660,8 +659,6 @@
         featured: featured ? [featured] : [],
         updated: updatedAt ? [new Date(updatedAt).toISOString()] : [],
         visibility: visibility ? [visibility] : [],
-        // Remove the old property when migrating an existing post to summary.
-        ...(currentPath ? { description: [] } : {}),
         category: categories ? categories.split(',').map((c) => c.trim()) : [],
         // The read API serializes legacy YAML dates as UTC timestamps. Leaving
         // an unchanged date out preserves its stored date-only meaning (and

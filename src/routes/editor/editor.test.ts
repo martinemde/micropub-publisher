@@ -24,12 +24,9 @@ afterEach(async () => {
   publicEnv.PUBLIC_SITE_URL = 'https://example.com';
 });
 
-test.each([
-  { content: 'Existing markdown body', original: undefined },
-  { content: 'Generated body with photos', original: 'Original Micropub content' }
-])(
+test.each([{ content: 'Existing markdown body' }])(
   'loads an existing post into the editor without Node globals: $content',
-  async ({ content, original }) => {
+  async ({ content }) => {
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() });
     vi.stubGlobal('Buffer', undefined);
     const jsonResponse = (data: unknown) => ({
@@ -55,15 +52,11 @@ test.each([
       return jsonResponse({
         content,
         frontmatter: {
-          title: 'Existing post',
+          name: 'Existing post',
           slug: 'existing',
-          description: 'A description',
-          published: true,
-          date: '2026-03-20T18:25:36.789Z',
-          categories: ['ruby', 'web'],
-          ...(original
-            ? { micropub: { properties: { name: ['Existing post'], content: [original] } } }
-            : {})
+          summary: 'A description',
+          published: '2026-03-20T18:25:36.789Z',
+          category: ['ruby', 'web']
         }
       });
     });
@@ -98,9 +91,7 @@ test.each([
       label.textContent?.includes('Published')
     );
     expect(published?.querySelector('input')?.checked).toBe(true);
-    expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe(
-      original ?? content
-    );
+    expect(document.querySelector<HTMLTextAreaElement>('#content')?.value).toBe(content);
     expect(document.querySelector('main')?.textContent).not.toContain('Failed to load post');
   }
 );
@@ -128,7 +119,7 @@ test.each(['unchanged', 'edited', 'now', 'new'])(
       if (input.startsWith('/api/posts/read?')) {
         return Response.json({
           content: 'Body',
-          frontmatter: { title: 'first', slug: 'first', date: originalDate }
+          frontmatter: { name: 'first', slug: 'first', published: originalDate }
         });
       }
       expect(input).toBe('/micropub');
@@ -243,7 +234,7 @@ test.each(['loaded', 'updated', 'autosaved', 'failed', 'editing during update'])
       const slug = input.includes('first.md') ? 'first' : 'second';
       return Response.json({
         content: 'Original body',
-        frontmatter: { title: slug, slug }
+        frontmatter: { name: slug, slug }
       });
     });
     editor = mount(Editor, {
@@ -568,7 +559,6 @@ test.each(['Article', 'Note', 'Bookmark', 'Photo'])(
         featured: [],
         updated: [],
         visibility: [],
-        description: [],
         ...(expected.photo ? { photo: expected.photo } : {}),
         ...(expected['bookmark-of'] ? { 'bookmark-of': expected['bookmark-of'] } : {})
       }
@@ -650,8 +640,8 @@ test.each(['note', 'bookmark', 'photo'])(
         ]);
       if (url.startsWith('/api/posts/read?'))
         return Response.json({
-          frontmatter: { title: 'Untitled Post', slug: 'original', micropub: { properties } },
-          content: 'Generated image or bookmark markup'
+          frontmatter: { slug: 'original', ...properties },
+          content: ''
         });
       requests.push(JSON.parse(init!.body as string));
       return new Response(null, { status: 204 });
@@ -726,97 +716,86 @@ test('logs media upload metadata, HTTP failures, and network failures without lo
   expect(log.querySelectorAll('details')).toHaveLength(0);
 });
 
-test.each(['Micropub', 'legacy'])(
-  'loads %s metadata and preserves it when updating',
-  async (format) => {
-    memoryStorage();
-    const updated = '2026-09-21T08:45:12.123Z';
-    const metadata = {
-      summary: ['Saved summary'],
-      featured: ['https://example.com/cover.jpg'],
-      updated: [updated],
-      visibility: ['private']
-    };
-    const requests: Record<string, unknown>[] = [];
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-      if (url === '/api/posts')
-        return Response.json([
-          { path: 'src/content/blog/2026-09-20-saved.md', slug: 'saved', date: '2026-09-20' }
-        ]);
-      if (url.startsWith('/api/posts/read?'))
-        return Response.json({
-          content: 'Body',
-          frontmatter: {
-            title: 'Saved article',
-            slug: 'saved',
-            description: format === 'legacy' ? 'Saved summary' : 'Stale description',
-            image: 'https://example.com/cover.jpg',
-            updated,
-            visibility: 'private',
-            ...(format === 'Micropub'
-              ? {
-                  micropub: {
-                    properties: { name: ['Saved article'], content: ['Body'], ...metadata }
-                  }
-                }
-              : {})
-          }
-        });
-      requests.push(JSON.parse(init!.body as string));
-      return new Response(null, { status: 204 });
-    });
-    startEditor();
-    await vi.waitFor(() => expect(document.querySelector('aside')?.textContent).toContain('saved'));
-    [...document.querySelectorAll<HTMLButtonElement>('aside button')]
-      .find((item) => item.textContent?.includes('saved'))!
-      .click();
-    await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
-    expect(document.querySelector<HTMLInputElement>('#summary')?.value).toBe('Saved summary');
-    expect(document.querySelector<HTMLInputElement>('#featured')?.value).toBe(
-      'https://example.com/cover.jpg'
-    );
-    expect(
-      new Date(document.querySelector<HTMLInputElement>('#updated-at')!.value).toISOString()
-    ).toBe(updated);
-    expect(document.querySelector<HTMLSelectElement>('#visibility')?.value).toBe('private');
-    button('Update Post').click();
-    await vi.waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0]).toMatchObject({ replace: { ...metadata, description: [] } });
-  }
-);
-
-test.each([
-  { name: 'A heading', content: 'A different opening', expected: 'Article' },
-  { name: 'A heading', content: '**A heading** and more', expected: 'Note' },
-  { name: '<b>A heading</b>', content: { html: '<p>A heading and more</p>' }, expected: 'Note' },
-  { name: 'A heading', content: { text: 'A different opening' }, expected: 'Article' },
-  { name: 'A heading', content: '', expected: 'Note' },
-  { name: '  ', content: 'A thought', expected: 'Note' }
-])('matches blog type inference for $expected: $content', async ({ name, content, expected }) => {
+test('loads metadata and preserves it when updating', async () => {
   memoryStorage();
-  vi.stubGlobal('fetch', async (url: string) =>
-    url === '/api/posts'
-      ? Response.json([
-          { path: 'src/content/blog/2026-09-20-saved.md', slug: 'saved', date: '2026-09-20' }
-        ])
-      : Response.json({
-          content: 'Fallback body',
-          frontmatter: {
-            slug: 'saved',
-            micropub: { properties: { name: [name], content: [content] } }
-          }
-        })
-  );
+  const updated = '2026-09-21T08:45:12.123Z';
+  const metadata = {
+    summary: ['Saved summary'],
+    featured: ['https://example.com/cover.jpg'],
+    updated: [updated],
+    visibility: ['private']
+  };
+  const requests: Record<string, unknown>[] = [];
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url === '/api/posts')
+      return Response.json([
+        { path: 'src/content/blog/2026-09-20-saved.md', slug: 'saved', date: '2026-09-20' }
+      ]);
+    if (url.startsWith('/api/posts/read?'))
+      return Response.json({
+        content: 'Body',
+        frontmatter: {
+          name: 'Saved article',
+          slug: 'saved',
+          summary: 'Saved summary',
+          featured: 'https://example.com/cover.jpg',
+          updated,
+          visibility: 'private'
+        }
+      });
+    requests.push(JSON.parse(init!.body as string));
+    return new Response(null, { status: 204 });
+  });
   startEditor();
   await vi.waitFor(() => expect(document.querySelector('aside')?.textContent).toContain('saved'));
   [...document.querySelectorAll<HTMLButtonElement>('aside button')]
     .find((item) => item.textContent?.includes('saved'))!
     .click();
   await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
-  expect(button(expected).getAttribute('aria-pressed')).toBe('true');
+  expect(document.querySelector<HTMLInputElement>('#summary')?.value).toBe('Saved summary');
+  expect(document.querySelector<HTMLInputElement>('#featured')?.value).toBe(
+    'https://example.com/cover.jpg'
+  );
+  expect(
+    new Date(document.querySelector<HTMLInputElement>('#updated-at')!.value).toISOString()
+  ).toBe(updated);
+  expect(document.querySelector<HTMLSelectElement>('#visibility')?.value).toBe('private');
+  button('Update Post').click();
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  expect(requests[0]).toMatchObject({ replace: metadata });
 });
 
-test('restores an old local draft description as summary and sets updated time explicitly', async () => {
+test.each([
+  { name: 'A heading', content: 'A different opening', expected: 'Article' },
+  { name: 'A heading', content: '**A heading** and more', expected: 'Note' },
+  { name: '<b>A heading</b>', content: '<p>A heading and more</p>', html: true, expected: 'Note' },
+  { name: 'A heading', content: '', expected: 'Note' },
+  { name: '  ', content: 'A thought', expected: 'Note' }
+])(
+  'matches blog type inference for $expected: $content',
+  async ({ name, content, html, expected }) => {
+    memoryStorage();
+    vi.stubGlobal('fetch', async (url: string) =>
+      url === '/api/posts'
+        ? Response.json([
+            { path: 'src/content/blog/2026-09-20-saved.md', slug: 'saved', date: '2026-09-20' }
+          ])
+        : Response.json({
+            content,
+            frontmatter: { slug: 'saved', name, ...(html ? { 'content-type': 'text/html' } : {}) }
+          })
+    );
+    startEditor();
+    await vi.waitFor(() => expect(document.querySelector('aside')?.textContent).toContain('saved'));
+    [...document.querySelectorAll<HTMLButtonElement>('aside button')]
+      .find((item) => item.textContent?.includes('saved'))!
+      .click();
+    await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
+    expect(button(expected).getAttribute('aria-pressed')).toBe('true');
+  }
+);
+
+test('restores a local draft summary and sets updated time explicitly', async () => {
   const storage = memoryStorage();
   storage.set(
     'blog-editor-draft',
@@ -824,7 +803,7 @@ test('restores an old local draft description as summary and sets updated time e
       title: 'Old draft',
       content: 'Body',
       slug: 'old-draft',
-      description: 'Legacy description',
+      summary: 'Draft summary',
       categories: '',
       published: false,
       autoSlug: true,
@@ -834,7 +813,7 @@ test('restores an old local draft description as summary and sets updated time e
   );
   vi.stubGlobal('fetch', async () => Response.json([]));
   startEditor();
-  expect(document.querySelector<HTMLInputElement>('#summary')?.value).toBe('Legacy description');
+  expect(document.querySelector<HTMLInputElement>('#summary')?.value).toBe('Draft summary');
   expect(document.querySelector<HTMLInputElement>('#updated-at')?.value).toBe('');
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-09-22T10:00:01.123Z'));
@@ -877,7 +856,7 @@ test('follows a post to its new permalink when an update moves it', async () => 
 });
 
 test.each(['loaded', 'normalized input', 'draft reload', 'old draft'])(
-  'keeps a legacy date-only permalink through an editor content edit: %s',
+  'keeps a date-only permalink through an editor content edit: %s',
   async (scenario) => {
     publicEnv.PUBLIC_SITE_URL = 'https://blog.example';
     const storage = memoryStorage();
@@ -885,7 +864,7 @@ test.each(['loaded', 'normalized input', 'draft reload', 'old draft'])(
     const path = 'src/content/blog/2025-12-19-legacy.md';
     await backend.createOrUpdateFile(
       path,
-      '---\ntitle: Legacy\ndate: 2025-12-19\nslug: legacy\npublished: true\n---\nOriginal body\n',
+      '---\nname: Legacy\npublished: 2025-12-19\nslug: legacy\n---\nOriginal body\n',
       'Seed'
     );
     const requests: Record<string, unknown>[] = [];
@@ -953,7 +932,7 @@ test.each(['2025-12-19T00:00:00.000Z', '2026-11-01T09:30:00.000Z'])(
       if (url.startsWith('/api/posts/read?'))
         return Response.json({
           content: 'Body',
-          frontmatter: { title: 'Exact', slug: 'exact', date }
+          frontmatter: { name: 'Exact', slug: 'exact', published: date }
         });
       requests.push(JSON.parse(init!.body as string));
       return new Response(null, { status: 204 });
@@ -1009,7 +988,7 @@ test.each(['no draft', 'local draft', 'typing first'])(
       reads.push(url);
       return Response.json({
         content: 'Body of the latest post',
-        frontmatter: { title: 'Latest', slug: 'latest', date: '2026-10-04T12:00:00Z' }
+        frontmatter: { name: 'Latest', slug: 'latest', published: '2026-10-04T12:00:00Z' }
       });
     });
     startEditor();
@@ -1044,7 +1023,7 @@ test('opens posts from the menu drawer and closes it after a choice or Escape', 
         ])
       : Response.json({
           content: 'A body',
-          frontmatter: { title: url.includes('older') ? 'Older' : 'Latest' }
+          frontmatter: { name: url.includes('older') ? 'Older' : 'Latest' }
         })
   );
   startEditor();
@@ -1131,7 +1110,7 @@ test.each(['2026-03-20', '2026-03-20T18:25:00.000Z', '2026-03-20T18:25:36.780Z']
       const slug = url.includes('first.md') ? 'first' : 'second';
       return Response.json({
         content: 'Original body',
-        frontmatter: { title: slug, slug, date, updated: date }
+        frontmatter: { name: slug, slug, published: date, updated: date }
       });
     });
     startEditor();
@@ -1198,7 +1177,7 @@ async function loadRecoveryPost() {
         ])
       : Response.json({
           content: 'Original body',
-          frontmatter: { title: 'Recovery', slug: 'recovery', date: '2026-03-20' }
+          frontmatter: { name: 'Recovery', slug: 'recovery', published: '2026-03-20' }
         })
   );
   vi.stubGlobal('fetch', fetch);

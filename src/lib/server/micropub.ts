@@ -106,7 +106,6 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
     'published',
     'slug',
     'mp-slug',
-    'description',
     'post-status',
     'bookmark-of',
     'summary',
