@@ -650,14 +650,14 @@ describe('Stored Micropub lifecycle through the app boundary', () => {
     expect(moved.status).toBe(409);
     expect(githubWrites.has('src/content/blog/2026-07-21-one.md')).toBe(true);
   });
-  it('keeps unquoted legacy dates on their own day when editing', async () => {
+  it('keeps unquoted dates on their own day when editing', async () => {
     const editor = storeAccessToken('fake', 'https://example.com/', 'update');
     const path = 'src/content/blog/2025-12-19-legacy.md';
     githubWrites.set(
       path,
-      Buffer.from('---\ntitle: Legacy\ndate: 2025-12-19\nslug: legacy\n---\nOld body\n').toString(
-        'base64'
-      )
+      Buffer.from(
+        '---\nname: Legacy\npublished: 2025-12-19\nslug: legacy\n---\nOld body\n'
+      ).toString('base64')
     );
     const updated = await send(
       {

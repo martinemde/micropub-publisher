@@ -72,21 +72,4 @@ describe('post files', () => {
     );
     expect(content.trim()).toBe('Caption');
   });
-
-  it('reads files written with the earlier wrapper keys', () => {
-    expect(
-      readProperties(
-        '---\ntitle: Old\ndate: 2025-12-19\ndescription: Short\nimage: /a.png\ncategories: [x]\npublished: true\nslug: old\n---\nBody\n'
-      )
-    ).toEqual({
-      name: ['Old'],
-      published: ['2025-12-19'],
-      summary: ['Short'],
-      featured: ['/a.png'],
-      category: ['x'],
-      slug: ['old'],
-      'post-status': ['published'],
-      content: ['Body']
-    });
-  });
 });
