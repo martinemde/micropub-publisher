@@ -935,7 +935,7 @@ test.each(['loaded', 'normalized input', 'draft reload', 'old draft'])(
     expect(requests).toHaveLength(1);
     expect(requests[0].replace).not.toHaveProperty('published');
     expect([...backend.getAllFiles().keys()]).toEqual([path]);
-    expect(matter(await backend.readFile(path)).data.date).toBe('2025-12-19');
+    expect(matter(await backend.readFile(path)).data.published).toBe('2025-12-19');
     expect(matter(await backend.readFile(path)).content.trim()).toBe('Edited body');
   }
 );

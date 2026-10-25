@@ -13,6 +13,7 @@
 
   import ActionLog, { type Action } from '../../lib/components/ActionLog.svelte';
   import { postTypes, inferPostType, type PostType, type Photo } from '#lib/editor/posts.ts';
+  import { frontMatterProperties } from '#lib/post-properties.ts';
 
   let { data }: { data: PageData } = $props();
 
@@ -417,36 +418,34 @@
       const { frontmatter, content: postContent } = await response.json();
       if (onlyIfPristine && (currentPath || hasUnsavedChanges())) return;
 
-      // Populate form
-      const source = frontmatter.micropub?.properties;
-      postType = inferPostType(
-        source ?? { ...frontmatter, name: frontmatter.name ?? frontmatter.title },
-        postContent
-      );
-      bookmark = source?.['bookmark-of']?.[0] ?? '';
-      photos = (source?.photo ?? []).map((photo: string | Photo) =>
+      // Populate form from the same Micropub properties the endpoint reads.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const source: Record<string, any[]> = frontMatterProperties(frontmatter, postContent);
+      postType = inferPostType(source, postContent);
+      bookmark = source['bookmark-of']?.[0] ?? '';
+      photos = (source.photo ?? []).map((photo: string | Photo) =>
         typeof photo === 'string' ? { value: photo, alt: '' } : { ...photo }
       );
-      title = source ? (source.name?.[0] ?? '') : frontmatter.title || '';
-      slug = frontmatter.slug || '';
-      summary = source?.summary?.[0] ?? frontmatter.description ?? '';
-      featured = source?.featured?.[0] ?? frontmatter.image ?? '';
-      const originalUpdated = source?.updated?.[0] ?? frontmatter.updated;
+      title = source.name?.[0] ?? '';
+      slug = source.slug?.[0] ?? '';
+      summary = source.summary?.[0] ?? '';
+      featured = source.featured?.[0] ?? '';
+      const originalUpdated = source.updated?.[0];
       updatedAt = originalUpdated ? localDateTime(new Date(originalUpdated)) : '';
-      visibility = source?.visibility?.[0] ?? frontmatter.visibility ?? '';
-      published = frontmatter.published ?? false;
+      visibility = source.visibility?.[0] ?? '';
+      published = source['post-status']?.[0] !== 'draft';
       const filenameDate = path
         .split('/')
         .pop()
         ?.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-      publishedAt = localDateTime(new Date(frontmatter.date || filenameDate || Date.now()));
+      publishedAt = localDateTime(new Date(source.published?.[0] || filenameDate || Date.now()));
       savedPublishedAt = publishedAt;
-      categories = frontmatter.categories?.join(', ') || '';
-      const originalContent = frontmatter.micropub?.properties?.content?.[0];
+      categories = source.category?.join(', ') || '';
+      const originalContent = source.content?.[0];
       content =
         typeof originalContent === 'string'
           ? originalContent
-          : (originalContent?.html ?? originalContent?.text ?? (source ? '' : postContent));
+          : (originalContent?.html ?? originalContent?.text ?? '');
       currentPath = path;
       autoSlug = false; // Don't auto-generate slug for existing posts
       savedPost = JSON.stringify(postState());
@@ -679,14 +678,15 @@
           `/api/posts/read?path=${encodeURIComponent(currentPath)}`
         );
         if (!original.ok) throw new Error('Failed to read the original publication date');
-        const { frontmatter } = await original.json();
+        const { frontmatter, content: originalBody } = await original.json();
         const filenameDate = currentPath
           .split('/')
           .pop()
           ?.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-        const baseline = frontmatter.date || filenameDate;
+        const baseline =
+          frontMatterProperties(frontmatter, originalBody ?? '').published?.[0] || filenameDate;
         if (!baseline) throw new Error('Original publication date is missing');
-        savedPublishedAt = localDateTime(new Date(baseline));
+        savedPublishedAt = localDateTime(new Date(String(baseline)));
         if (sameLocalDateTime(submittedPost.publishedAt, savedPublishedAt))
           delete properties.published;
       }

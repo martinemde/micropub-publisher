@@ -45,6 +45,7 @@ export const privateEnv: Record<string, string | undefined> = {
   GITHUB_CLIENT_ID: 'test_client_id',
   GITHUB_CLIENT_SECRET: 'test_client_secret',
   GITHUB_OWNER: 'test_owner',
+  AUTHOR_NAME: undefined,
   GITHUB_REPO: 'test_repo',
   SESSION_SECRET: 'test_session_secret_key_for_testing_only_32_chars',
   MICROPUB_BACKEND: 'test',

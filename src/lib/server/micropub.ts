@@ -1,22 +1,27 @@
 import { error } from '@sveltejs/kit';
 import matter from 'gray-matter';
-import { GITHUB_OWNER } from '$app/env/private';
+import { AUTHOR_NAME, GITHUB_OWNER } from '$app/env/private';
+import {
+  HTML_CONTENT,
+  frontMatterProperties,
+  type MicropubProperties
+} from '#lib/post-properties.ts';
 import { requireEnvironmentVariable } from './env.ts';
 
-export type MicropubProperties = Record<string, unknown[]>;
+export type { MicropubProperties };
 export interface MicropubRequest {
   properties?: Record<string, unknown>;
   [key: string]: unknown;
 }
 export interface BlogPost {
   title: string;
+  /** The Markdown body: the submitted content, exactly. */
   content: string;
+  html: boolean;
   slug: string;
   date: string;
   published: boolean;
-  description?: string;
   author: string;
-  categories?: string[];
   properties: MicropubProperties;
 }
 const reserved = new Set([
@@ -66,13 +71,7 @@ const first = (properties: MicropubProperties, key: string, fallback = ''): stri
   const value = properties[key]?.[0];
   return typeof value === 'string' ? value : fallback;
 };
-const escapeAttribute = (value: string) =>
-  value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
-function photoMarkup(value: unknown): string {
+function validatePhoto(value: unknown) {
   const photo =
     typeof value === 'string'
       ? { value, alt: '' }
@@ -85,7 +84,6 @@ function photoMarkup(value: unknown): string {
     invalid('Photo URL must be absolute');
   }
   if (!['http:', 'https:'].includes(url.protocol)) invalid('Invalid photo URL scheme');
-  return `<img src="${escapeAttribute(photo.value)}" alt="${escapeAttribute(typeof photo.alt === 'string' ? photo.alt : '')}" />`;
 }
 export function parseMicropubRequest(request: MicropubRequest): BlogPost {
   if (
@@ -110,7 +108,9 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
     'mp-slug',
     'description',
     'post-status',
-    'bookmark-of'
+    'bookmark-of',
+    'summary',
+    'featured'
   ]) {
     if (properties[key]?.some((value) => typeof value !== 'string')) invalid(`Invalid ${key}`);
   }
@@ -138,14 +138,15 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
   if (!/^[a-zA-Z0-9]+(?:[-_][a-zA-Z0-9]+)*$/.test(slug)) invalid('Invalid slug');
   const value = properties.content?.[0];
   let content = typeof value === 'string' ? value : '';
+  let html = false;
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const rich = value as { html?: unknown; text?: unknown };
+    html = typeof rich.html === 'string';
     content =
       typeof rich.html === 'string' ? rich.html : typeof rich.text === 'string' ? rich.text : '';
   }
-  const photos = (properties.photo ?? []).map(photoMarkup);
-  // Photos lead the post, above any caption text.
-  if (photos.length) content = [...photos, content].filter(Boolean).join('\n\n');
+  // Photos and bookmarks stay properties; the blog renders them around the body.
+  (properties.photo ?? []).forEach(validatePhoto);
   for (const bookmark of properties['bookmark-of'] ?? []) {
     let url: URL;
     try {
@@ -154,64 +155,68 @@ export function parseMicropubRequest(request: MicropubRequest): BlogPost {
       invalid('Bookmark URL must be absolute');
     }
     if (!['http:', 'https:'].includes(url.protocol)) invalid('Invalid bookmark URL scheme');
-    const href = escapeAttribute(bookmark as string);
-    content += `\n\n<a class="u-bookmark-of" href="${href}">${href}</a>`;
   }
   return {
     title,
     content,
+    html,
     slug,
     date,
     published: postStatus === 'published',
-    description: first(properties, 'description') || undefined,
-    author: requireEnvironmentVariable('GITHUB_OWNER', GITHUB_OWNER),
-    categories: properties.category?.filter((value): value is string => typeof value === 'string'),
+    author:
+      first(properties, 'author') ||
+      AUTHOR_NAME ||
+      requireEnvironmentVariable('GITHUB_OWNER', GITHUB_OWNER),
     properties
   };
 }
+/** Familiar keys first; any other property a client sent follows in its own order. */
+const keyOrder = [
+  'name',
+  'published',
+  'updated',
+  'author',
+  'summary',
+  'featured',
+  'category',
+  'photo',
+  'bookmark-of',
+  'post-status',
+  'visibility',
+  'slug'
+];
+/** Properties that are lists by nature stay lists even with one value. */
+const listProperties = new Set(['category', 'photo']);
+/**
+ * Every Micropub property is a top-level front matter key under its Micropub
+ * name, and the body is the content. A single value is written as a scalar so
+ * the file reads like ordinary front matter; reading wraps it back in an array.
+ */
 export function generateMarkdownFile(post: BlogPost): string {
-  const data = Object.fromEntries(
-    Object.entries({
-      title: post.title || undefined,
-      date: post.date,
-      author: post.author,
-      description: post.description,
-      published: post.published,
-      slug: post.slug,
-      categories: post.categories,
-      micropub: { type: ['h-entry'], properties: post.properties }
-    }).filter(([, value]) => value !== undefined)
-  );
+  const { content: _content, ...rest } = post.properties;
+  const properties: MicropubProperties = {
+    ...rest,
+    published: [post.date],
+    // A client's own author (e.g. an h-card) wins over the configured name.
+    author: rest.author?.length ? rest.author : [post.author],
+    slug: [post.slug]
+  };
+  const keys = [
+    ...keyOrder.filter((key) => key in properties),
+    ...Object.keys(properties).filter((key) => !keyOrder.includes(key))
+  ];
+  const data: Record<string, unknown> = {};
+  for (const key of keys) {
+    const values = properties[key];
+    if (!values.length) continue;
+    data[key] = values.length === 1 && !listProperties.has(key) ? values[0] : values;
+  }
+  if (post.html) data['content-type'] = HTML_CONTENT;
   return matter.stringify(post.content + '\n', data);
 }
-// Unquoted YAML dates like `date: 2025-12-19` parse as UTC midnight. Keep them
-// date-only so they stay on their own day instead of the Pacific day before.
-const yamlDate = (date: Date) =>
-  date.getTime() % 86_400_000 === 0 ? date.toISOString().slice(0, 10) : date.toISOString();
 export function readProperties(source: string): MicropubProperties {
   const { data, content } = matter(source);
-  const published = data.date instanceof Date ? yamlDate(data.date) : data.date;
-  if (data.micropub?.properties) {
-    const properties = normalizeProperties(data.micropub.properties);
-    // Clients may omit published on creation. Preserve the date we stored instead
-    // of assigning today's date when that post is edited later.
-    if (!properties.published?.length && published !== undefined)
-      properties.published = [published];
-    return properties;
-  }
-  return normalizeProperties(
-    Object.fromEntries(
-      Object.entries({
-        name: data.title,
-        content,
-        category: data.categories,
-        slug: data.slug,
-        published,
-        description: data.description,
-        'post-status': data.published ? 'published' : 'draft'
-      }).filter(([, value]) => value !== undefined)
-    )
-  );
+  return normalizeProperties(frontMatterProperties(data, content));
 }
 export function generateFilePath(post: BlogPost): string {
   return `src/content/blog/${siteDateParts(post.date).day}-${post.slug}.md`;

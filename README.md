@@ -27,6 +27,18 @@ excludes unlisted and private posts from publication; these values do not protec
 repository files. Clearing a field replaces its property with an empty array.
 Editing an older post migrates its description to summary.
 
+Each post is committed as a Markdown file whose front matter is its Micropub
+properties, top-level under their Micropub names: `name`, `published` (ISO 8601),
+`updated`, `author` (`AUTHOR_NAME`, else `GITHUB_OWNER`), `summary`, `featured`,
+`category`, `photo`, `bookmark-of`, `post-status`, `visibility`, `slug`, then any
+other property a client sent. A single value is written as a scalar (`category`
+and `photo` stay lists); reading wraps it back in an array. The body is the
+`content`, exactly; `content-type: text/html` marks a body submitted as
+`content.html`. Photos and bookmarks are not copied into the body: the blog
+renders them from `photo` and `bookmark-of`. `src/lib/post-properties.ts` reads
+this format, and still reads files written with the older `micropub:` block or
+`title`/`date`/`description` wrapper keys.
+
 Expand entries in the editor's **Action log** to inspect the actual request body,
 HTTP status, response body, and `Location` header. All four composers create
 `h-entry` objects: `bookmark-of` identifies a bookmark and `photo` a photo post.

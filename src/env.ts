@@ -15,6 +15,7 @@ export const variables = defineEnvVars({
   GITHUB_CLIENT_ID: optional('GitHub App client ID for user authorization.'),
   GITHUB_CLIENT_SECRET: optional('GitHub App client secret for user authorization.'),
   GITHUB_OWNER: optional('Owner of the repository posts are committed to.'),
+  AUTHOR_NAME: optional('Display name written as the post author; defaults to GITHUB_OWNER.'),
   GITHUB_REPO: optional('Repository posts are committed to.'),
   SESSION_SECRET: optional('Session cookie encryption secret, at least 32 characters.'),
   MICROPUB_BACKEND: {

@@ -19,6 +19,7 @@
     "PUBLIC_APP_URL": "https://publish.martinemde.com",
     "PUBLIC_SITE_URL": "https://martinemde.com",
     "GITHUB_OWNER": "martinemde",
+    "AUTHOR_NAME": "Martin Emde",
     "GITHUB_REPO": "martinemde.com",
     "MICROPUB_BACKEND": "github",
     "PUBLISHER_RUNTIME": "cloudflare"
