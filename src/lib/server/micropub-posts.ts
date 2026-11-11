@@ -71,7 +71,8 @@ function propertyMap(value: unknown): MicropubProperties {
 /** Applies a Micropub action. Returns the new URL when an update moves the post. */
 export async function mutatePost(
   backend: StorageBackend,
-  request: Record<string, unknown>
+  request: Record<string, unknown>,
+  message?: string
 ): Promise<string | undefined> {
   if (request.action === 'undelete') {
     const { day: requestedDay, slug } = postLocation(request.url);
@@ -149,7 +150,7 @@ export async function mutatePost(
     await backend.createOrUpdateFile(
       path,
       generateMarkdownFile(post),
-      `Update post: ${post.title || slug}`
+      message ?? `Update post: ${post.title || slug}`
     );
     return;
   }

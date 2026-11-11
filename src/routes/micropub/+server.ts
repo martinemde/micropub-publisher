@@ -20,6 +20,7 @@ import {
   postUrl
 } from '#lib/server/micropub-posts.ts';
 import { uploadPhoto, validatePhoto } from '#lib/server/micropub-media.ts';
+import { queueSyndication, requestedTargets, syndicationTargets } from '#lib/server/syndication.ts';
 import type { RequestHandler } from './$types';
 
 /**
@@ -35,7 +36,7 @@ export const GET: RequestHandler = async ({ url, request, locals }) => {
   if (query === 'config') {
     return json({
       'media-endpoint': `${requireEnvironmentVariable('PUBLIC_APP_URL', PUBLIC_APP_URL)}/micropub/media`,
-      'syndicate-to': [],
+      'syndicate-to': syndicationTargets(),
       'post-types': [
         { type: 'note', name: 'Note' },
         { type: 'article', name: 'Article' },
@@ -43,6 +44,10 @@ export const GET: RequestHandler = async ({ url, request, locals }) => {
         { type: 'bookmark', name: 'Bookmark' }
       ]
     });
+  }
+
+  if (query === 'syndicate-to') {
+    return json({ 'syndicate-to': syndicationTargets() });
   }
 
   if (query === 'source') {
@@ -137,15 +142,32 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       if (action === 'update' && !contentType.includes('application/json'))
         invalid('Updates require JSON');
       requireMicropubToken(request, locals, url, bodyToken, action);
+      // An update may ask for copies on targets the post isn't on yet.
+      const operations = [micropubRequest.add, micropubRequest.replace].map((operation) =>
+        operation && typeof operation === 'object'
+          ? (operation as Record<string, unknown>)['mp-syndicate-to']
+          : undefined
+      );
+      const targets = requestedTargets(operations.flatMap((value) => value ?? []));
       const moved = await serializeWrite(() =>
         mutatePost(createStorageBackend(githubToken), micropubRequest)
       );
+      if (action === 'update') {
+        queueSyndication(moved ?? (micropubRequest.url as string), targets, githubToken);
+      }
       // Micropub answers a URL-changing update with 201 and the new Location.
       return moved
         ? new Response(null, { status: 201, headers: { Location: moved } })
         : new Response(null, { status: 204 });
     }
     requireMicropubToken(request, locals, url, bodyToken, 'create');
+
+    const properties = micropubRequest.properties;
+    const targets = requestedTargets(
+      properties && typeof properties === 'object' && !Array.isArray(properties)
+        ? (properties as Record<string, unknown>)['mp-syndicate-to']
+        : micropubRequest['mp-syndicate-to']
+    );
 
     return await serializeWrite(async () => {
       // Create storage backend
@@ -191,6 +213,8 @@ export const POST: RequestHandler = async ({ request, locals, url }) => {
       // Create or update file via storage backend
       const commitMessage = generateCommitMessage(post, exists);
       await backend.createOrUpdateFile(filePath, content, commitMessage);
+      // Drafts are never syndicated; publishing one later can ask again.
+      if (post.published) queueSyndication(postUrl(post), targets, githubToken);
 
       // Return 201 Created with Location header
       return new Response(null, {

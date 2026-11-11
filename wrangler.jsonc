@@ -4,7 +4,9 @@
   "account_id": "9c275e0c035e53370143e8cf240dfb3f",
   "main": ".svelte-kit/cloudflare/_worker.js",
   "compatibility_date": "2026-09-20",
-  "compatibility_flags": ["nodejs_compat"],
+  // global_fetch_strictly_public lets the publisher fetch martinemde.com, a Worker on the same zone,
+  // to see that a post's deploy is live before syndicating it.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
     "directory": ".svelte-kit/cloudflare",
     "binding": "ASSETS"
@@ -20,6 +22,7 @@
     "PUBLIC_SITE_URL": "https://martinemde.com",
     "GITHUB_OWNER": "martinemde",
     "AUTHOR_NAME": "Martin Emde",
+    "BLUESKY_IDENTIFIER": "martinemde.com",
     "GITHUB_REPO": "martinemde.com",
     "MICROPUB_BACKEND": "github",
     "PUBLISHER_RUNTIME": "cloudflare"

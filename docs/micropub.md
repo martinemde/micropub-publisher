@@ -7,8 +7,8 @@ format the publisher writes is described in the [README](../README.md).
 
 ## Queries
 
-`q=config` advertises the media endpoint, an empty `syndicate-to`, and `post-types`
-(note, article, photo, bookmark). `q=source` returns a post's properties, optionally
+`q=config` advertises the media endpoint, `syndicate-to`, and `post-types`
+(note, article, photo, bookmark). `q=syndicate-to` returns just the targets. `q=source` returns a post's properties, optionally
 filtered with `properties[]`. Both require authentication.
 
 ## Creating posts
@@ -24,13 +24,14 @@ Supported [extensions](https://indieweb.org/Micropub-extensions):
 - `mp-slug`: suggests a slug, normalized to lowercase letters, digits, and hyphens.
   The `slug` property is also accepted for the built-in editor.
 - `post-types` in `q=config`.
+- `mp-syndicate-to`: copies the post to a configured target (see Syndication below).
 
 A slug that is already used (on any date, or by an archived deletion) gets a unique
 suffix. The `Location` header and the stored `mp-slug` contain the allocated slug.
 Updates keep existing permalinks. HTML content is stored as-is with
 `content-type: text/html` for the blog renderer to handle.
 
-Not implemented: syndication, location discovery or rendering, media queries,
+Not implemented: location discovery or rendering, media queries,
 post-list queries, and other experimental extensions.
 
 ## Updating and deleting
@@ -89,3 +90,22 @@ curl -X POST https://publish.martinemde.com/micropub \
     }
   }'
 ```
+
+## Syndication
+
+The publisher copies posts to Bluesky (POSSE). `syndicate-to` lists the target only when
+`BLUESKY_IDENTIFIER` (a var in `wrangler.jsonc`) and the `BLUESKY_APP_PASSWORD` secret are
+both set; see [deployment.md](deployment.md). An unknown target is rejected with
+`invalid_request` before anything is written.
+
+A create, or an update whose `add` or `replace` carries `mp-syndicate-to`, queues a job in
+the Durable Object. Its alarm fetches the permalink until the deploy is live (1, 2, 4, 8,
+then 15 minutes apart; then it gives up and the editor shows why), posts once per target,
+and commits the copy's URL to the post's `syndication` list. The
+`global_fetch_strictly_public` flag lets the Worker reach martinemde.com on the same zone.
+
+A short note is posted whole without a link. Articles (name and summary), photos,
+bookmarks (commentary and the bookmarked URL), and notes over 300 graphemes get a link
+card for the permalink, built from the page's Open Graph tags and image. Drafts,
+unlisted, and private posts are never copied, and a post already on a service is not
+posted there again.

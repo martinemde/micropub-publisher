@@ -26,5 +26,8 @@ export const variables = defineEnvVars({
       throw new Error('MICROPUB_BACKEND must be github, file, or test');
     }
   },
+  BLUESKY_IDENTIFIER: optional('Bluesky handle posts are syndicated to, e.g. martinemde.com.'),
+  BLUESKY_APP_PASSWORD: optional('Bluesky app password for that handle; enables syndication.'),
+  BLUESKY_SERVICE: optional('Bluesky entryway for sign-in; defaults to https://bsky.social.'),
   PUBLISHER_RUNTIME: optional('Set to cloudflare where a Durable Object must own state.')
 });

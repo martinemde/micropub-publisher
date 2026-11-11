@@ -48,7 +48,8 @@ visible as failures. File 805 is included even though upstream's database seed
 omits it; its assertion expects the literal error string `bad request`, which differs
 from Micropub's `invalid_request`. Preserve that distinction when fixing the app.
 
-The local suite passes all 35 in-scope cases. Case 601 (syndication) is excluded.
+The local suite passes all 35 in-scope cases. Case 601 (syndication) is excluded: the
+local run configures no Bluesky credentials, so `syndicate-to` is empty.
 Manual checks are judged against the actual generated files: canonical properties,
 blog frontmatter, content/HTML, photo URLs and alt text, uploaded bytes, absence of
 deleted post files, and byte-for-byte restoration. Reports retain each judgment's

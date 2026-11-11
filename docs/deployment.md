@@ -69,3 +69,15 @@ verified separately from these local checks.
 
 If the old GitHub OAuth App is still authorized, revoke it on GitHub; changing this
 service does not revoke old GitHub tokens remotely.
+
+## Bluesky syndication
+
+Syndication stays off until the app password is set. Create one in Bluesky under
+Settings → Privacy and security → App passwords, without DM access, then store it
+without putting it in a command argument:
+
+```sh
+pnpm exec wrangler secret put BLUESKY_APP_PASSWORD
+```
+
+Revoking the app password in Bluesky stops syndication without a deploy.

@@ -66,6 +66,7 @@ test.each([{ content: 'Existing markdown body' }])(
         data: {
           isAuthenticated: true,
           siteUrl: 'https://blog.example',
+          syndicateTo: [],
           user: { id: 1, login: 'tester', name: 'Test User', avatar_url: '' }
         }
       }
@@ -131,7 +132,14 @@ test.each(['unchanged', 'edited', 'now', 'new'])(
     });
     editor = mount(Editor, {
       target: document.body,
-      props: { data: { isAuthenticated: true, siteUrl: 'https://blog.example', user: null } }
+      props: {
+        data: {
+          isAuthenticated: true,
+          siteUrl: 'https://blog.example',
+          syndicateTo: [],
+          user: null
+        }
+      }
     });
     flushSync();
     const postButton = () =>
@@ -240,7 +248,12 @@ test.each(['loaded', 'updated', 'autosaved', 'failed', 'editing during update'])
     editor = mount(Editor, {
       target: document.body,
       props: {
-        data: { isAuthenticated: true, siteUrl: 'https://blog.example', user: null }
+        data: {
+          isAuthenticated: true,
+          siteUrl: 'https://blog.example',
+          syndicateTo: [],
+          user: null
+        }
       }
     });
     flushSync();
@@ -301,7 +314,9 @@ function fill(selector: string, value: string) {
 function startEditor() {
   editor = mount(Editor, {
     target: document.body,
-    props: { data: { isAuthenticated: true, siteUrl: 'https://blog.example', user: null } }
+    props: {
+      data: { isAuthenticated: true, siteUrl: 'https://blog.example', syndicateTo: [], user: null }
+    }
   });
   flushSync();
 }
@@ -1406,3 +1421,73 @@ test('retains per-type composer baselines after reload and removes only the reve
   window.dispatchEvent(dirtyNoteUnload);
   expect(dirtyNoteUnload.defaultPrevented).toBe(true);
 });
+
+test.each([[], ['https://bsky.app/profile/example.com/post/1']])(
+  'offers syndication to targets a published post is not on yet: %j',
+  async (...syndication) => {
+    memoryStorage();
+    const target = {
+      uid: 'https://bsky.app/profile/example.com',
+      name: 'Bluesky (@example.com)',
+      service: { name: 'Bluesky', url: 'https://bsky.app/' },
+      user: { name: '@example.com', url: 'https://bsky.app/profile/example.com' }
+    };
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (url === '/api/posts')
+        return Response.json([
+          { path: 'src/content/blog/2026-09-20-saved.md', slug: 'saved', date: '2026-09-20' }
+        ]);
+      if (url.startsWith('/api/posts/read?'))
+        return Response.json({
+          content: 'Body',
+          frontmatter: { slug: 'saved', ...(syndication.length && { syndication }) }
+        });
+      if (url.startsWith('/api/syndication?')) {
+        expect(url).toBe(
+          `/api/syndication?url=${encodeURIComponent('https://blog.example/2026/09/20/saved')}`
+        );
+        return Response.json(null);
+      }
+      requests.push(JSON.parse(init!.body as string));
+      return new Response(null, { status: 204 });
+    });
+    editor = mount(Editor, {
+      target: document.body,
+      props: {
+        data: {
+          isAuthenticated: true,
+          siteUrl: 'https://blog.example',
+          syndicateTo: [target],
+          user: null
+        }
+      }
+    });
+    flushSync();
+    await vi.waitFor(() => expect(button('Update Post')).toBeDefined());
+    const choice = () =>
+      [...document.querySelectorAll('label')]
+        .find((label) => label.textContent?.includes('Post to Bluesky'))
+        ?.querySelector('input');
+    if (syndication.length) {
+      expect(choice()).toBeUndefined();
+      const link = [...document.querySelectorAll('a')].find((a) => a.textContent === 'On Bluesky');
+      expect(link?.href).toBe(syndication[0]);
+      return;
+    }
+    choice()!.click();
+    flushSync();
+    button('Update Post').click();
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({
+      action: 'update',
+      add: { 'mp-syndicate-to': [target.uid] }
+    });
+    await vi.waitFor(() =>
+      expect(document.querySelector('main')?.textContent).toContain(
+        'Waiting for the deploy before posting to Bluesky.'
+      )
+    );
+    expect(choice()!.checked).toBe(false);
+  }
+);
