@@ -70,4 +70,4 @@ post-deploy checks are in [docs/deployment.md](docs/deployment.md).
 - [docs/testing.md](docs/testing.md): conformance runner, test suites, and the hosted micropub.rocks procedure
 - [docs/deployment.md](docs/deployment.md): production setup and deployment
 
-Contributor and agent conventions are in [CLAUDE.md](CLAUDE.md).
+Contributor and agent conventions are in [AGENTS.md](AGENTS.md).
