@@ -90,7 +90,6 @@ storage on `globalThis` for `src/lib/server/state.ts`.
 ## Verify
 
 ```sh
-pnpm run format
 pnpm run lint
 pnpm run check
 pnpm run test
