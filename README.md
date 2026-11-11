@@ -1,53 +1,20 @@
 # Micropub Publisher
 
-A standalone Micropub, media, IndieAuth, and Markdown editor service backed by GitHub App user authorization. The service has no repository credential of its own: each GitHub write uses a user access token limited by both the signed-in user and the GitHub App installation.
-
-This was extracted from `martinemde.com` at commit `964f9969d271`. `PUBLIC_APP_URL` and `PUBLIC_SITE_URL` allow the publisher and published site to use different origins. All 35 in-scope local Micropub conformance cases pass. Hosted conformance has not been verified; see [docs/testing.md](docs/testing.md) for the procedure and limits of local judgments.
+A standalone [Micropub](https://www.w3.org/TR/micropub/) endpoint, media endpoint,
+IndieAuth server, and Markdown editor for [martinemde.com](https://martinemde.com),
+running on Cloudflare Workers at `https://publish.martinemde.com`. Each post is committed
+to the blog's repository as a Markdown file, using the signed-in user's GitHub App token;
+the service holds no repository credential of its own.
 
 ## Routes
 
-- `/auth/indieauth/authorize` and `/auth/indieauth/token`
-- `/auth/github/login`, `/login/callback`, and `/auth/github/logout`
-- `/micropub` and `/micropub/media`
-- `/editor`
-- `/api/posts` and `/api/posts/read`
-
-The editor has Article, Note, Bookmark, and Photo composers. New drafts are kept
-separately per type in local storage, so switching composers preserves unfinished
-work. Select a saved post to edit it in the matching composer; use **New post** to
-start again. Notes need only text, bookmarks need a URL, and photos accept uploaded
-images or image URLs with alt text and an optional caption.
-
-**Post details** supports Micropub `summary`, `featured`, `updated`, and the
-`visibility` extension. Summary loads older descriptions; featured is a cover
-image URL separate from content photos. Updated time is optional and uses local
-time in the form and ISO timestamps in requests. Visibility can be omitted or set
-to public, unlisted, or private, independently of draft status. The blog currently
-excludes unlisted and private posts from publication; these values do not protect
-repository files. Clearing a field replaces its property with an empty array.
-Editing an older post migrates its description to summary.
-
-Each post is committed as a Markdown file whose front matter is its Micropub
-properties, top-level under their Micropub names: `name`, `published` (ISO 8601),
-`updated`, `author` (`AUTHOR_NAME`, else `GITHUB_OWNER`), `summary`, `featured`,
-`category`, `photo`, `bookmark-of`, `post-status`, `visibility`, `slug`, then any
-other property a client sent. A single value is written as a scalar (`category`
-and `photo` stay lists); reading wraps it back in an array. The body is the
-`content`, exactly; `content-type: text/html` marks a body submitted as
-`content.html`. Photos and bookmarks are not copied into the body: the blog
-renders them from `photo` and `bookmark-of`. `src/lib/post-properties.ts` reads
-this format, and only this format.
-
-Expand entries in the editor's **Action log** to inspect the actual request body,
-HTTP status, response body, and `Location` header. All four composers create
-`h-entry` objects: `bookmark-of` identifies a bookmark and `photo` a photo post.
-Like the blog's `src/lib/utils/post-model.ts`, the editor recognizes an article
-when its nonempty name differs from the beginning of its nonempty content;
-otherwise it recognizes a note. Updates send `action: update` with
-`replace` properties. Uploading a file sends multipart data to `/micropub/media`,
-then its returned URL is used in the post. The log labels `/api/posts` requests as
-publisher-specific APIs rather than Micropub. Logs are held only in page memory,
-omit session credentials and binary file contents, and clear on reload.
+- `/editor`: the built-in editor ([docs/editor.md](docs/editor.md))
+- `/micropub` and `/micropub/media`: Micropub ([docs/micropub.md](docs/micropub.md))
+- `/auth/indieauth/authorize` and `/auth/indieauth/token`: IndieAuth for Micropub clients
+- `/auth/github/login`, `/login/callback`, and `/auth/github/logout`: GitHub sign-in
+  ([docs/authentication.md](docs/authentication.md))
+- `/api/posts` and `/api/posts/read`: publisher-specific APIs the editor uses to list and
+  load posts
 
 ## Run locally
 
@@ -72,21 +39,6 @@ The published site's identity page must advertise the standalone endpoints:
 <link rel="micropub" href="https://publish.martinemde.com/micropub" />
 ```
 
-## Code conventions
-
-SvelteKit 3 options, including the adapter and CSRF policy, are passed to
-`sveltekit(...)` in `vite.config.ts`; there is no `svelte.config.js`. Environment
-variables are declared in `src/env.ts` and imported from `$app/env/private` or
-`$app/env/public`; tests change them through `privateEnv` and `publicEnv` in
-`src/lib/test-helpers.ts`. Import library modules as `#lib/…` with explicit file
-extensions. Import `.svelte` components by relative path instead, because
-`svelte-check --tsgo` does not type-check props through `#lib`.
-
-`scripts/cloudflare-adapter.mjs` wraps the adapter's Worker in
-`scripts/cloudflare-worker.mjs`, which routes every request through one Durable
-Object. Adapter 8 passes no per-request `platform`, so that object registers its
-storage on `globalThis` for `src/lib/server/state.ts`.
-
 ## Verify
 
 ```sh
@@ -107,13 +59,15 @@ the same commands; see [docs/testing.md](docs/testing.md) for details.
 
 ## Deploy
 
-Production runs on Cloudflare Workers at `https://publish.martinemde.com`. See
-[docs/deployment.md](docs/deployment.md) for the GitHub App settings, secrets,
-deploy commands, and post-deploy checks.
+`pnpm run deploy` builds and deploys the Worker. First-time setup, secrets, and
+post-deploy checks are in [docs/deployment.md](docs/deployment.md).
 
 ## Documentation
 
-- [docs/micropub.md](docs/micropub.md): supported Micropub features, media, and storage backends
+- [docs/editor.md](docs/editor.md): composers, post details, and the action log
+- [docs/micropub.md](docs/micropub.md): post file format, supported Micropub features, media, and storage backends
 - [docs/authentication.md](docs/authentication.md): GitHub App sign-in, IndieAuth, and token state
 - [docs/testing.md](docs/testing.md): conformance runner, test suites, and the hosted micropub.rocks procedure
 - [docs/deployment.md](docs/deployment.md): production setup and deployment
+
+Contributor and agent conventions are in [CLAUDE.md](CLAUDE.md).
