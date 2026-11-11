@@ -10,6 +10,10 @@ export class DurableState {
     }
     return this.#maps.get(name);
   }
+  setAlarm(at) {
+    // Output gates hold the response until the alarm is stored.
+    void this.storage.setAlarm(at);
+  }
 }
 
 class DurableMap extends Map {

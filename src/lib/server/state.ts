@@ -3,6 +3,7 @@ import { PUBLISHER_RUNTIME } from '$app/env/private';
 /** Persistent maps owned by the production Durable Object (scripts/durable-state.mjs). */
 interface DurableState {
   getMap<T>(name: string): Map<string, T>;
+  setAlarm(at: number): void;
 }
 
 /**
@@ -26,3 +27,21 @@ export function stateMap<T>(name: string): Map<string, T> {
     }
   });
 }
+
+/**
+ * Run `task` at `at`. The Durable Object's alarm survives restarts and calls
+ * back through /syndication/run; local development uses a timer.
+ */
+export function scheduleAlarm(at: number, task: () => Promise<void>): void {
+  const state = (globalThis as { [DURABLE_STATE]?: DurableState })[DURABLE_STATE];
+  if (state) return state.setAlarm(at);
+  if (PUBLISHER_RUNTIME === 'cloudflare') {
+    throw new Error('Alarms are only available inside the Durable Object');
+  }
+  clearTimeout(localTimer);
+  localTimer = setTimeout(
+    () => task().catch((error) => console.error('Scheduled task failed:', error)),
+    Math.max(0, at - Date.now())
+  );
+}
+let localTimer: ReturnType<typeof setTimeout> | undefined;

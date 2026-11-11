@@ -33,7 +33,7 @@ describe('post files', () => {
       category: ['one'],
       photo: [{ value: 'https://example.com/a.png', alt: 'A "quoted" photo' }],
       slug: 'a-title',
-      syndication: 'https://example.social/1'
+      syndication: ['https://example.social/1']
     });
     expect(content).toBe('Body text\n');
     expect(Object.keys(data)[0]).toBe('name');

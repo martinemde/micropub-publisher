@@ -49,6 +49,9 @@ export const privateEnv: Record<string, string | undefined> = {
   GITHUB_REPO: 'test_repo',
   SESSION_SECRET: 'test_session_secret_key_for_testing_only_32_chars',
   MICROPUB_BACKEND: 'test',
+  BLUESKY_IDENTIFIER: undefined,
+  BLUESKY_APP_PASSWORD: undefined,
+  BLUESKY_SERVICE: undefined,
   PUBLISHER_RUNTIME: undefined
 };
 

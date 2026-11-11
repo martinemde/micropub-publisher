@@ -175,6 +175,28 @@ The media endpoint enforces its own 10 MiB file limit. Adapter-node's `ORIGIN` a
 credentials still require signing in again. Token revocation deletes the live
 record; Cloudflare's storage recovery retention can retain historical data.
 
+## Syndication
+
+The publisher can copy posts to Bluesky (POSSE). `q=config` lists a target in
+`syndicate-to` only when `BLUESKY_IDENTIFIER` (a var in `wrangler.jsonc`) and the
+`BLUESKY_APP_PASSWORD` secret are both set. Create the app password in Bluesky under
+Settings → Privacy and security → App passwords, without DM access, then add it
+without putting it in a command argument:
+
+```sh
+pnpm exec wrangler secret put BLUESKY_APP_PASSWORD
+```
+
+A create, or an update whose `add` or `replace` carries `mp-syndicate-to`, queues a
+job in the Durable Object. Its alarm fetches the permalink until the deploy is live
+(1, 2, 4, 8, then 15 minutes apart; then it gives up and the editor shows why),
+posts once per target, and commits the copy's URL to the post's `syndication` list.
+The `global_fetch_strictly_public` flag lets the Worker reach martinemde.com on the
+same zone. A short note is posted whole without a link; articles, photos, bookmarks,
+and notes over 300 graphemes get a link card for the permalink. Drafts, unlisted,
+and private posts are never copied. Revoking the app password stops syndication
+without a deploy.
+
 See `MICROPUB_SETUP.md`, `INDIEAUTH_IMPLEMENTATION.md`, and `TESTING_GUIDE.md` for the recovered implementation details. `OAUTH_SECURITY_ANALYSIS.md` records the original audit and the fixes made before extraction.
 
 The GitHub App flow uses state and S256 PKCE. Cookies and sealed IndieAuth codes

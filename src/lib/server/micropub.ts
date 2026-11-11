@@ -185,7 +185,7 @@ const keyOrder = [
   'slug'
 ];
 /** Properties that are lists by nature stay lists even with one value. */
-const listProperties = new Set(['category', 'photo']);
+const listProperties = new Set(['category', 'photo', 'syndication']);
 /**
  * Every Micropub property is a top-level front matter key under its Micropub
  * name, and the body is the content. A single value is written as a scalar so

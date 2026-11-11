@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GET, POST } from './+server.ts';
 import { storeAccessToken } from '#lib/server/token-store.ts';
 import type { RequestEvent } from './$types';
-import { expectHttpError } from '#lib/test-helpers.ts';
+import { expectHttpError, privateEnv } from '#lib/test-helpers.ts';
+import { syndicationJob } from '#lib/server/syndication.ts';
 
 // Mock dependencies (env mocks are in vitest-setup.ts)
 vi.mock('#lib/server/storage/factory.ts', () => ({
@@ -169,6 +170,63 @@ describe('Micropub GET Endpoint', () => {
 
       await expectHttpError(GET(event), 400, 'Invalid query parameter');
     });
+  });
+});
+
+describe('Micropub syndication', () => {
+  const target = 'https://bsky.app/profile/example.com';
+  let token: string;
+  beforeEach(() => {
+    privateEnv.BLUESKY_IDENTIFIER = 'example.com';
+    privateEnv.BLUESKY_APP_PASSWORD = 'app-password';
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    token = storeAccessToken('github_test_token', 'https://example.com/', 'create');
+  });
+  afterEach(() => {
+    privateEnv.BLUESKY_IDENTIFIER = undefined;
+    privateEnv.BLUESKY_APP_PASSWORD = undefined;
+    vi.useRealTimers();
+  });
+  const create = (properties: Record<string, unknown>) =>
+    POST(
+      createRequestEvent('POST', 'https://example.com/micropub', {
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ type: ['h-entry'], properties })
+      })
+    );
+
+  it('lists configured targets in q=config and q=syndicate-to', async () => {
+    for (const query of ['config', 'syndicate-to']) {
+      const response = await GET(
+        createRequestEvent('GET', `https://example.com/micropub?q=${query}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      );
+      expect((await response.json())['syndicate-to']).toEqual([
+        {
+          uid: target,
+          name: 'Bluesky (@example.com)',
+          service: { name: 'Bluesky', url: 'https://bsky.app/' },
+          user: { name: '@example.com', url: target }
+        }
+      ]);
+    }
+  });
+
+  it('queues a created post for its requested targets', async () => {
+    const response = await create({ content: ['Hello'], 'mp-syndicate-to': [target] });
+    expect(response.status).toBe(201);
+    const job = syndicationJob(response.headers.get('Location')!);
+    expect(job?.targets).toEqual([target]);
+    expect(job?.credential).toBe('github_test_token');
+  });
+
+  it('rejects an unknown target before writing', async () => {
+    await expectHttpError(
+      create({ content: ['Hello'], 'mp-syndicate-to': ['https://example.social/me'] }),
+      400,
+      'Unknown syndication target'
+    );
   });
 });
 

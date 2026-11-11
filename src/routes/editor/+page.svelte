@@ -61,6 +61,11 @@
   let photos = $state<Photo[]>([]);
   let drafts: Partial<Record<PostType, EditorDraft>> = {};
   let actions = $state<Action[]>([]);
+  // Copies of the open post elsewhere, the targets checked for this save, and
+  // what the publisher reports about copies it hasn't made yet.
+  let syndication = $state<string[]>([]);
+  let syndicateTo = $state<string[]>([]);
+  let syndicationStatus = $state('');
   let nextAction = 0;
 
   async function loggedFetch(url: string, init?: RequestInit): Promise<Response> {
@@ -339,6 +344,9 @@
     savedPublishedAt = draft?.savedPublishedAt ?? '';
     autoSlug = draft?.autoSlug ?? true;
     currentPath = '';
+    syndication = [];
+    syndicateTo = [];
+    syndicationStatus = '';
     if (typeof draft?.savedPost === 'string') savedPost = draft.savedPost;
     else if (!draft) savedPost = JSON.stringify(postState());
     error = '';
@@ -440,6 +448,10 @@
       publishedAt = localDateTime(new Date(source.published?.[0] || filenameDate || Date.now()));
       savedPublishedAt = publishedAt;
       categories = source.category?.join(', ') || '';
+      syndication = (source.syndication ?? []).filter((url) => typeof url === 'string');
+      syndicateTo = [];
+      syndicationStatus = '';
+      if (data.syndicateTo.length) void loadSyndicationStatus(path);
       const originalContent = source.content?.[0];
       content =
         typeof originalContent === 'string'
@@ -456,6 +468,47 @@
       console.error('Error loading post:', err);
     }
   }
+
+  /** A post's permalink: src/content/blog/2026-07-21-slug.md is at /2026/07/21/slug. */
+  function permalinkFor(path: string): string {
+    return `${data.siteUrl}/${path
+      .split('/')
+      .pop()!
+      .replace(/^(\d{4})-(\d{2})-(\d{2})-(.+)\.md$/, '$1/$2/$3/$4')}`;
+  }
+
+  const serviceName = (uid: string) =>
+    data.syndicateTo.find((target) => target.uid === uid)?.service.name ?? uid;
+
+  async function loadSyndicationStatus(path: string) {
+    try {
+      const response = await fetch(
+        `/api/syndication?url=${encodeURIComponent(permalinkFor(path))}`
+      );
+      const job = response.ok ? await response.json() : null;
+      if (!job || currentPath !== path) return;
+      const waiting = job.targets
+        .filter((uid: string) => !job.done[uid])
+        .map(serviceName)
+        .join(', ');
+      syndicationStatus = job.error
+        ? `Posting to ${waiting} failed: ${job.error}`
+        : waiting
+          ? `Waiting for the deploy before posting to ${waiting}.`
+          : '';
+    } catch {
+      // Status is informational; the post itself loaded.
+    }
+  }
+
+  // Targets this post isn't on yet. Drafts and hidden posts are never copied.
+  const syndicationChoices = $derived(
+    published && visibility !== 'unlisted' && visibility !== 'private'
+      ? data.syndicateTo.filter(
+          (target) => !syndication.some((url) => url.startsWith(target.service.url))
+        )
+      : []
+  );
 
   // Handle selecting a post from the list
   async function handleSelectPost(path: string, isDraft: boolean) {
@@ -640,13 +693,10 @@
     try {
       const postDate = new Date(publishedAt).toISOString();
 
-      // src/content/blog/2026-07-21-slug.md is published at /2026/07/21/slug
-      const postUrl = currentPath
-        ? `${data.siteUrl}/${currentPath
-            .split('/')
-            .pop()!
-            .replace(/^(\d{4})-(\d{2})-(\d{2})-(.+)\.md$/, '$1/$2/$3/$4')}`
-        : '';
+      const postUrl = currentPath ? permalinkFor(currentPath) : '';
+      const targets = syndicateTo.filter((uid) =>
+        syndicationChoices.some((target) => target.uid === uid)
+      );
       const properties = {
         ...(postType === 'article' || postType === 'bookmark'
           ? { name: title ? [title] : [] }
@@ -694,11 +744,18 @@
         },
         body: JSON.stringify(
           currentPath
-            ? { action: 'update', url: postUrl, replace: properties }
+            ? {
+                action: 'update',
+                url: postUrl,
+                replace: properties,
+                ...(targets.length && { add: { 'mp-syndicate-to': targets } })
+              }
             : {
                 type: ['h-entry'],
                 properties: Object.fromEntries(
-                  Object.entries(properties).filter(([, values]) => values.length)
+                  Object.entries({ ...properties, 'mp-syndicate-to': targets }).filter(
+                    ([, values]) => values.length
+                  )
                 )
               }
         )
@@ -721,6 +778,12 @@
         }
         savedPost = JSON.stringify(submittedPost);
         savedPublishedAt = submittedPost.publishedAt;
+        if (targets.length) {
+          syndicateTo = [];
+          syndicationStatus = `Waiting for the deploy before posting to ${targets
+            .map(serviceName)
+            .join(', ')}.`;
+        }
         if (hasUnsavedChanges()) {
           // Preserve edits made while the request was in flight.
           saveDraft();
@@ -1033,6 +1096,10 @@
     </div>
   {/if}
 
+  {#if syndicationStatus}
+    <p role="status" class="mb-6 text-sm text-surface-600-400">{syndicationStatus}</p>
+  {/if}
+
   <form id="post-form" onsubmit={handleSubmit} oninvalidcapture={handleInvalid}>
     <nav aria-label="Post type" class="mb-4 flex flex-wrap gap-1 text-sm">
       {#each postTypes as type (type.type)}
@@ -1101,6 +1168,27 @@
         />
         Published
       </label>
+      {#each syndicationChoices as target (target.uid)}
+        <label class="flex items-center gap-2 py-1 text-sm text-surface-700-300">
+          <input
+            type="checkbox"
+            bind:group={syndicateTo}
+            value={target.uid}
+            class="rounded border-surface-300-700 text-primary-500 focus:ring-2 focus:ring-primary-500"
+          />
+          Post to {target.service.name}
+        </label>
+      {/each}
+      {#each syndication as copy (copy)}
+        <a
+          href={copy}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="py-1 text-sm text-surface-600-400 underline hover:text-surface-950-50"
+          >On {data.syndicateTo.find((target) => copy.startsWith(target.service.url))?.service
+            .name ?? new URL(copy).hostname}</a
+        >
+      {/each}
       <button
         type="button"
         onclick={() => (detailsOpen = !detailsOpen)}

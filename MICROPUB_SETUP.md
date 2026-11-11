@@ -197,7 +197,7 @@ Possible improvements:
 - **Post editing**: Load and edit existing posts
 - **Post deletion**: Delete posts through the editor
 - **Rich media**: Support for videos, embeds
-- **Syndication**: Cross-post to other platforms
+- **Syndication**: Cross-post to X and other platforms (Bluesky is supported; see the README)
 - **Markdown editor**: Syntax highlighting, live preview side-by-side
 
 ## References

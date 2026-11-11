@@ -22,7 +22,7 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
     modules: true,
     scriptPath: resolve('.wrangler/dry-run/_worker.js'),
     compatibilityDate: '2026-09-20',
-    compatibilityFlags: ['nodejs_compat'],
+    compatibilityFlags: ['nodejs_compat', 'global_fetch_strictly_public'],
     durableObjects: { PUBLISHER: { className: 'Publisher', useSQLite: true } },
     resourcePersistencePath: directory,
     cf: false,
@@ -139,6 +139,10 @@ test('Worker authentication, refresh, replay protection, and logout survive rest
     for (const path of ['/app.js', '/durable-state.mjs', '/_worker.js']) {
       expect((await worker.dispatchFetch(origin + path)).status).toBe(404);
     }
+    // Only the Durable Object's alarm may run syndication.
+    expect(
+      (await worker.dispatchFetch(`${origin}/syndication/run`, { method: 'POST' })).status
+    ).toBe(404);
     const login = await worker.dispatchFetch(`${origin}/auth/github/login`, { redirect: 'manual' });
     expect(login.status).toBe(302);
     const state = new URL(login.headers.get('location')).searchParams.get('state');
