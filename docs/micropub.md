@@ -1,9 +1,23 @@
 # Micropub endpoint
 
 `/micropub` and `/micropub/media` implement [Micropub](https://www.w3.org/TR/micropub/).
-The built-in editor uses the same endpoints with its session cookie; other clients use an
-IndieAuth bearer token (see [authentication.md](authentication.md)). The front matter
-format the publisher writes is described in the [README](../README.md).
+The built-in [editor](editor.md) uses the same endpoints with its session cookie; other
+clients use an IndieAuth bearer token (see [authentication.md](authentication.md)).
+
+## Post files
+
+Each post is committed to `src/content/blog/YYYY-MM-DD-slug.md`. Its front matter is
+its Micropub properties, top-level under their Micropub names: `name`, `published`
+(ISO 8601), `updated`, `author` (`AUTHOR_NAME`, else `GITHUB_OWNER`), `summary`,
+`featured`, `category`, `photo`, `bookmark-of`, `post-status`, `visibility`, `slug`,
+then any other property a client sent. A single value is written as a scalar
+(`category` and `photo` stay lists); reading wraps it back in an array.
+
+The body is the `content`, exactly; `content-type: text/html` marks a body submitted as
+`content.html`. Photos and bookmarks are not copied into the body: the blog renders
+them from `photo` and `bookmark-of`. `src/lib/post-properties.ts` reads this format,
+and only this format. The blog's renderer must agree with it; martinemde.com keeps
+publisher-generated fixtures for that contract.
 
 ## Queries
 
@@ -71,8 +85,6 @@ production uses `github`.
 - `file`: writes the same paths under the publisher's working directory. Endpoint
   authentication still applies. It does not write to a separately hosted blog.
 - `test`: in-memory, for unit tests.
-
-Posts are written to `src/content/blog/YYYY-MM-DD-slug.md`.
 
 ## Example
 
