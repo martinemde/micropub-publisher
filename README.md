@@ -2,7 +2,7 @@
 
 A standalone Micropub, media, IndieAuth, and Markdown editor service backed by GitHub App user authorization. The service has no repository credential of its own: each GitHub write uses a user access token limited by both the signed-in user and the GitHub App installation.
 
-This was extracted from `martinemde.com` at commit `964f9969d271`. `PUBLIC_APP_URL` and `PUBLIC_SITE_URL` allow the publisher and published site to use different origins. All 35 in-scope local Micropub conformance cases pass. Hosted conformance has not been verified; see `TESTING_GUIDE.md` for the procedure and limits of local judgments.
+This was extracted from `martinemde.com` at commit `964f9969d271`. `PUBLIC_APP_URL` and `PUBLIC_SITE_URL` allow the publisher and published site to use different origins. All 35 in-scope local Micropub conformance cases pass. Hosted conformance has not been verified; see [docs/testing.md](docs/testing.md) for the procedure and limits of local judgments.
 
 ## Routes
 
@@ -104,111 +104,17 @@ once, then `pnpm run conformance`. This starts an isolated local app, runs the
 pinned micropub.rocks browser assertions over HTTP, and saves artifacts under
 `.conformance/runs/`. Failures and unresolved manual checks produce a nonzero exit code. File-backed
 judgments record evidence for the manual cases. The GitHub Actions workflow runs
-the same commands; see `TESTING_GUIDE.md` for details.
+the same commands; see [docs/testing.md](docs/testing.md) for details.
 
 ## Deploy
 
-Production is prepared for `https://publish.martinemde.com`, representing
-`https://martinemde.com`. Register exactly `https://publish.martinemde.com/login/callback`
-as the GitHub App callback. Install the app only on the selected blog repository,
-with **Contents: read and write** (Metadata read is automatic). Leave user token
-expiration enabled. Webhooks, device flow, an app private key, and installation
-access tokens are not used. User authorization is requested when signing in to the
-editor or authorizing a Micropub client.
+Production runs on Cloudflare Workers at `https://publish.martinemde.com`. See
+[docs/deployment.md](docs/deployment.md) for the GitHub App settings, secrets,
+deploy commands, and post-deploy checks.
 
-Cloudflare Workers runs the service, with a SQLite-backed Durable Object owning
-GitHub credentials, Micropub tokens, and consumed authorization codes. Requests
-to the application are serialized through that object, including GitHub writes
-and token refreshes. Explicit map mutations write durable storage; credentials
-survive eviction and deployment. Vite development and local conformance use
-isolated in-memory stores. Cloudflare requests fail closed without durable state.
+## Documentation
 
-`wrangler.jsonc` fixes the production origins and publishing repository
-`martinemde/martinemde.com`. The sibling `../cloudflare` repo manages the custom
-domain; Wrangler manages the Worker, assets, Durable Object migration, and secrets.
-Worker preview URLs and request logging are disabled.
-
-The production Worker name is `publish`, matching the custom domain's service in
-`../cloudflare/workers.tf`. Keep Wrangler's `name` aligned with that service.
-Deploying as the former `micropub-publisher` name can try to recreate its existing
-Durable Object namespace and fail with Cloudflare error 10065. Correct the Worker
-name, then rerun `pnpm run deploy`; do not rename or delete the stored class.
-
-Keep production secrets in ignored `.env.production.local`, separate from dev's
-`.env.local`. It must contain `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and a
-fresh random `SESSION_SECRET` of at least 32 characters. Use the production GitHub
-App's **client ID**, not App ID. Do not copy the dev credentials. Keep the session
-secret stable across deployments to preserve cookies and authorization codes.
-
-Verify locally before deployment:
-
-```sh
-pnpm run build
-pnpm run test:cloudflare
-pnpm run conformance
-```
-
-`test:cloudflare` bundles with Wrangler's dry run, then runs the actual Worker in
-Miniflare with fake external services. It verifies login, GitHub user-token refresh,
-Micropub token issuance, restart persistence, code replay rejection, and logout
-revocation surviving another restart. It never uses real credentials or GitHub.
-
-For the initial deployment, authenticate Wrangler and run:
-
-```sh
-pnpm run build
-pnpm exec wrangler deploy --secrets-file .env.production.local
-```
-
-That file must contain only the three secret values; public origins and repository
-settings belong in `wrangler.jsonc`. Never put secrets in command arguments. A Worker
-must exist before OpenTofu can attach its custom domain. In `../cloudflare`, run
-`make plan`, review the publisher domain addition, then `make apply`.
-Subsequent code deployments use `pnpm run deploy` without rotating secrets or
-reapplying unchanged infrastructure. Verify HTTPS and the login redirect at
-`https://publish.martinemde.com/auth/github/login`, then complete a real login
-before considering deployment verified. Micropub clients also need the identity
-links shown above on the blog.
-
-The media endpoint enforces its own 10 MiB file limit. Adapter-node's `ORIGIN` and
-`BODY_SIZE_LIMIT` settings do not apply to Workers. Expired/revoked GitHub refresh
-credentials still require signing in again. Token revocation deletes the live
-record; Cloudflare's storage recovery retention can retain historical data.
-
-## Syndication
-
-The publisher can copy posts to Bluesky (POSSE). `q=config` lists a target in
-`syndicate-to` only when `BLUESKY_IDENTIFIER` (a var in `wrangler.jsonc`) and the
-`BLUESKY_APP_PASSWORD` secret are both set. Create the app password in Bluesky under
-Settings → Privacy and security → App passwords, without DM access, then add it
-without putting it in a command argument:
-
-```sh
-pnpm exec wrangler secret put BLUESKY_APP_PASSWORD
-```
-
-A create, or an update whose `add` or `replace` carries `mp-syndicate-to`, queues a
-job in the Durable Object. Its alarm fetches the permalink until the deploy is live
-(1, 2, 4, 8, then 15 minutes apart; then it gives up and the editor shows why),
-posts once per target, and commits the copy's URL to the post's `syndication` list.
-The `global_fetch_strictly_public` flag lets the Worker reach martinemde.com on the
-same zone. A short note is posted whole without a link; articles, photos, bookmarks,
-and notes over 300 graphemes get a link card for the permalink. Drafts, unlisted,
-and private posts are never copied. Revoking the app password stops syndication
-without a deploy.
-
-See `MICROPUB_SETUP.md`, `INDIEAUTH_IMPLEMENTATION.md`, and `TESTING_GUIDE.md` for the recovered implementation details. `OAUTH_SECURITY_ANALYSIS.md` records the original audit and the fixes made before extraction.
-
-The GitHub App flow uses state and S256 PKCE. Cookies and sealed IndieAuth codes
-carry opaque credential references; GitHub access/refresh tokens remain server-side.
-The new cookie name invalidates legacy OAuth sessions. Revoke the old OAuth App's
-GitHub authorization when retiring it; changing this service does not revoke old
-GitHub tokens remotely. The old `/auth/github/callback` route remains an alias.
-
-DNS, HTTPS, app installation, secrets, and the live authorization flow must be
-verified separately from these local checks.
-
-When installation starts on GitHub with user authorization enabled, the first
-callback can lack our state/PKCE. The publisher discards that code and starts a
-fresh protected login. To retry a failed installation landing, open
-`http://localhost:5180/auth/github/login`; reinstalling is not necessary.
+- [docs/micropub.md](docs/micropub.md): supported Micropub features, media, and storage backends
+- [docs/authentication.md](docs/authentication.md): GitHub App sign-in, IndieAuth, and token state
+- [docs/testing.md](docs/testing.md): conformance runner, test suites, and the hosted micropub.rocks procedure
+- [docs/deployment.md](docs/deployment.md): production setup and deployment

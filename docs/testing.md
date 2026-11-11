@@ -1,4 +1,7 @@
-# Micropub conformance testing
+# Testing
+
+What the publisher implements is described in [micropub.md](micropub.md) and
+[authentication.md](authentication.md); this page covers how it is verified.
 
 ## Local upstream conformance
 
@@ -45,7 +48,8 @@ visible as failures. File 805 is included even though upstream's database seed
 omits it; its assertion expects the literal error string `bad request`, which differs
 from Micropub's `invalid_request`. Preserve that distinction when fixing the app.
 
-The local suite passes all 35 in-scope cases. Case 601 (syndication) is excluded.
+The local suite passes all 35 in-scope cases. Case 601 (syndication) is excluded: the
+local run configures no Bluesky credentials, so `syndicate-to` is empty.
 Manual checks are judged against the actual generated files: canonical properties,
 blog frontmatter, content/HTML, photo URLs and alt text, uploaded bytes, absence of
 deleted post files, and byte-for-byte restoration. Reports retain each judgment's
@@ -57,13 +61,12 @@ header token. The local runner omits that header on its create request; the sour
 query and all upstream assertions remain unchanged. Case 805 still verifies that
 actual duplicate transports are rejected. No upstream source files are edited.
 
-The local workflow `.github/workflows/conformance.yml` runs these commands on pushes
-and pull requests with pnpm 10.34.5 and Node 26.9.0, no publishing credentials, and read-only repository
-permissions. It uploads reports and generated post snapshots even on failure, without
-uploading the isolated app or dependency tree. It has not been run on GitHub yet.
-Pending judgments never count as passes.
+The workflow `.github/workflows/conformance.yml` runs these commands on pushes and
+pull requests with no publishing credentials and read-only repository permissions.
+It uploads reports and generated post snapshots even on failure, without uploading
+the isolated app or dependency tree. Pending judgments never count as passes.
 
-## Local verification
+## Unit and integration tests
 
 Run `pnpm run test`, `pnpm run check`, `pnpm run lint`, and `pnpm run build`.
 Run `pnpm run test src/hooks.server.test.ts` for the protocol transport regression tests.
@@ -77,88 +80,6 @@ context is supplied by the harness, including conversion of endpoint HttpErrors
 to responses. This is not a deployed HTTP test or a hosted conformance result.
 The older Micropub endpoint tests mock parsing and storage and cannot demonstrate
 that the generated blog content is correct.
-
-Cross-origin and Origin-less Micropub requests must provide a protocol token.
-Only requests with an Origin matching the publisher may use its editor session
-cookie. CORS permits browser clients to send Authorization and read Location;
-it does not enable credentialed cross-origin cookie access. Other routes retain
-CSRF protection.
-
-## Conformance implementation
-
-Form and JSON creation preserve repeated categories and nested property values.
-Photos support URLs, alt text, and multipart uploads. Markdown retains the original
-Micropub properties under `micropub` in YAML frontmatter for source queries and edits;
-authentication and protocol control fields are excluded. Nested objects are retained
-as data; this does not implement location discovery or rendering.
-
-Create requests allocate distinct slugs when the requested slug is already used,
-including another publication date or an archived deletion. The editor uses explicit
-updates and retains the returned slug. Posts default to published; explicit drafts
-remain drafts. HTML is preserved for the blog renderer to handle.
-
-Updates support replace/add/delete and source queries support property filtering.
-Delete first saves a recovery copy in `.micropub/deleted/<slug>.json`, outside the blog
-content directory, then removes the live file. Undelete restores the exact original
-and removes the recovery copy. GitHub storage uses separate commits for these steps:
-an interrupted delete can leave both copies (retry deletion); an interrupted archive
-cleanup after undelete can leave a recovery copy alongside the restored post. Do not
-interpret an API failure as proof no storage operation occurred.
-
-Tokens require the matching create/update/delete/undelete scope for each action.
-Authorization grants only requested supported scopes and token exchange cannot
-broaden them. Configuration/source queries require authentication. Duplicate token
-transports return 400. Scope failures use HTTP 401 `insufficient_scope`, following
-[Micropub error responses](https://www.w3.org/TR/micropub/#error-response).
-
-## Publishing workflow
-
-The stable [Micropub extensions](https://indieweb.org/Micropub-extensions) supported
-here are `post-status`, `mp-slug`, and `post-types` in `q=config`. Config advertises
-note, article, photo, and bookmark. All use h-entry; supported publishing properties
-are `name`, `content`, `category`, `photo`, and `bookmark-of`.
-
-`post-status` accepts `published` (default) and `draft`. This maps to the blog's
-`published` frontmatter flag; draft visibility and future scheduling depend on the
-blog renderer respecting that metadata. Update the property to publish a draft.
-`mp-slug` suggests a slug at creation, normalized to lowercase letters/digits and
-hyphens. Collisions receive a unique suffix; the returned Location and stored
-`mp-slug` contain the allocated slug. Updates retain existing permalinks. The legacy
-`slug` property remains accepted for the built-in editor.
-
-Media accepts one JPEG, PNG, GIF, WebP, or AVIF file per endpoint request, up to 10 MiB.
-Names use server-generated UUIDs and extensions derived from the declared media type,
-so client filenames cannot select paths or overwrite prior uploads. Validation does
-not decode or re-encode image bytes. Empty files and SVG are rejected. Inline multipart
-photo creation uses the same validation. Configure the production adapter's
-`BODY_SIZE_LIMIT=12M` (also in `.env.example`) to allow multipart overhead.
-
-No syndication, location rendering, media queries, post-list queries, or other
-experimental extension is implemented. The existing empty `syndicate-to` config
-field is retained. Mutations are serialized within the supported single-process
-runtime; multiple replicas are not supported by the in-memory token store or write
-serialization.
-
-## Credential boundary review
-
-The publisher now uses GitHub App user authorization with state and S256 PKCE,
-requesting no broad OAuth scope. The configured GitHub App must have Contents
-read/write on selected repositories. Authorization-code exchange and refresh use
-only the app client ID/secret; no installation token or private key is used.
-
-GitHub access and rotating refresh tokens live in server memory, referenced by
-opaque IDs in encrypted editor cookies and IndieAuth authorization codes. Refresh
-is shared by editor and protocol clients, and simultaneous refresh attempts share
-one request. Logout removes the credential and its Micropub tokens; failed refresh
-requires reauthorization. Restart loses all these sessions. Legacy OAuth cookies
-are invalidated by the new cookie name; remote OAuth authorization must be revoked
-separately when retiring the old app.
-
-Boundary tests cover the production callback, absence of OAuth scope, PKCE,
-refresh, logout after rotation, and rejected refresh without writes or secret logs.
-OAuth, publishing, media, and editor API error logging no longer dumps raw GitHub
-error objects. Editor API read paths still need canonical path validation; the
-file backend's `join` does not confine traversal to its intended content directory.
 
 ## Run the hosted suite
 
