@@ -1,9 +1,17 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":semanticCommits"],
+  "extends": [
+    "config:recommended",
+    ":semanticCommits"
+  ],
   "dependencyDashboard": true,
-  "schedule": ["before 9am"],
-  "labels": ["deps", "automated"],
+  "schedule": [
+    "before 9am"
+  ],
+  "labels": [
+    "deps",
+    "automated"
+  ],
   "prHourlyLimit": 2,
   "prConcurrentLimit": 5,
   "automerge": false,
@@ -15,15 +23,50 @@
     "enabled": true,
     "minimumReleaseAge": null,
     "automerge": false,
-    "addLabels": ["security"]
+    "addLabels": [
+      "security"
+    ]
   },
   "github-actions": {
     "pinDigests": true
   },
   "packageRules": [
     {
-      "matchCategories": ["docker"],
+      "matchCategories": [
+        "docker"
+      ],
       "pinDigests": true
+    },
+    {
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "automerge": true
+    },
+    {
+      "matchUpdateTypes": [
+        "major",
+        "pin",
+        "pinDigest"
+      ],
+      "automerge": false
+    },
+    {
+      "matchManagers": [
+        "renovate-config"
+      ],
+      "automerge": false
+    },
+    {
+      "matchJsonata": [
+        "isVulnerabilityAlert = true"
+      ],
+      "automerge": false
     }
-  ]
+  ],
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "platformAutomerge": false
 }
