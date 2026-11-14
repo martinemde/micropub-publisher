@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { cp, mkdir, symlink, writeFile } from 'node:fs/promises';
 
 const [root, runDir] = process.argv.slice(2);
@@ -13,6 +14,8 @@ for (const file of [
   'tsconfig.json',
   'package.json'
 ]) {
+  // static/ holds only files the storage backend writes, so a clean checkout lacks it.
+  if (file === 'static' && !existsSync(resolve(root, file))) continue;
   await cp(resolve(root, file), resolve(runDir, file), { recursive: true });
 }
 await symlink(resolve(root, 'node_modules'), resolve(runDir, 'node_modules'), 'dir');
