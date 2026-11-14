@@ -1,58 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    ":semanticCommits"
+    "github>martinemde/renovate-config#v1.1.0"
   ],
-  "dependencyDashboard": true,
   "schedule": [
     "before 9am"
   ],
-  "labels": [
-    "deps",
-    "automated"
-  ],
-  "prHourlyLimit": 2,
-  "prConcurrentLimit": 5,
-  "automerge": false,
-  "minimumReleaseAge": "7 days",
-  "minimumReleaseAgeBehaviour": "timestamp-required",
-  "internalChecksFilter": "strict",
-  "osvVulnerabilityAlerts": true,
-  "vulnerabilityAlerts": {
-    "enabled": true,
-    "minimumReleaseAge": null,
-    "automerge": true,
-    "addLabels": [
-      "security"
-    ]
-  },
-  "github-actions": {
-    "pinDigests": true
-  },
   "packageRules": [
-    {
-      "matchCategories": [
-        "docker"
-      ],
-      "pinDigests": true
-    },
-    {
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "digest"
-      ],
-      "automerge": true
-    },
-    {
-      "matchUpdateTypes": [
-        "major",
-        "pin",
-        "pinDigest"
-      ],
-      "automerge": false
-    },
     {
       "matchManagers": [
         "renovate-config"
@@ -60,13 +14,11 @@
       "automerge": false
     },
     {
-      "matchJsonata": [
-        "isVulnerabilityAlert = true"
+      "matchUpdateTypes": [
+        "pin",
+        "pinDigest"
       ],
-      "automerge": true
+      "automerge": false
     }
-  ],
-  "automergeType": "pr",
-  "automergeStrategy": "squash",
-  "platformAutomerge": false
+  ]
 }
