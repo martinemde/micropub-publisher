@@ -1491,3 +1491,68 @@ test.each([[], ['https://bsky.app/profile/example.com/post/1']])(
     expect(choice()!.checked).toBe(false);
   }
 );
+
+test('previews the Bluesky post and prepares the X post for a published note', async () => {
+  memoryStorage();
+  vi.stubGlobal('fetch', async (url: string) =>
+    url === '/api/posts' ? Response.json([]) : Response.json(null)
+  );
+  const target = {
+    uid: 'https://bsky.app/profile/example.com',
+    name: 'Bluesky (@example.com)',
+    service: { name: 'Bluesky', url: 'https://bsky.app/' },
+    user: { name: '@example.com', url: 'https://bsky.app/profile/example.com' }
+  };
+  editor = mount(Editor, {
+    target: document.body,
+    props: {
+      data: {
+        isAuthenticated: true,
+        siteUrl: 'https://blog.example',
+        syndicateTo: [target],
+        user: { id: 1, login: 'tester', name: 'Test User', avatar_url: '' }
+      }
+    }
+  });
+  flushSync();
+  [...document.querySelectorAll<HTMLButtonElement>('nav[aria-label="Post type"] button')]
+    .find((item) => item.textContent?.includes('Note'))!
+    .click();
+  flushSync();
+  fill('#content', 'Hello from the [editor](https://example.org).');
+  // 4:32:05 PM Pacific, entered in the test machine's own time zone.
+  const at = new Date('2026-11-15T00:32:05Z');
+  fill(
+    '#published-at',
+    new Date(at.getTime() - at.getTimezoneOffset() * 60_000).toISOString().slice(0, 19)
+  );
+  const published = [...document.querySelectorAll('label')]
+    .find((label) => label.textContent?.trim() === 'Published')!
+    .querySelector('input')!;
+  if (!published.checked) published.click();
+  flushSync();
+  [...document.querySelectorAll('label')]
+    .find((label) => label.textContent?.includes('Post to Bluesky'))!
+    .querySelector('input')!
+    .click();
+  flushSync();
+  button('Preview').click();
+  await vi.waitFor(() =>
+    expect(document.querySelector('[aria-label="Bluesky post preview"]')).not.toBeNull()
+  );
+  const bluesky = document.querySelector('[aria-label="Bluesky post preview"]')!;
+  expect(bluesky.textContent).toContain('Test User');
+  expect(bluesky.textContent).toContain('Hello from the editor.');
+  expect(bluesky.querySelector('span.text-primary-600-400')?.textContent).toBe('editor');
+  expect(document.querySelector('[aria-label="Social posts"]')?.textContent).toContain(
+    'posts after the deploy'
+  );
+  const permalink = 'https://blog.example/2026/11/14/163205';
+  expect(document.querySelector('[aria-label="X post text"]')?.textContent?.trim()).toBe(
+    `Hello from the editor.\n\n${permalink}`
+  );
+  const share = [...document.querySelectorAll('a')].find((a) => a.textContent?.includes('Open in X'));
+  expect(new URL(share!.href).searchParams.get('text')).toBe(
+    `Hello from the editor.\n\n${permalink}`
+  );
+});

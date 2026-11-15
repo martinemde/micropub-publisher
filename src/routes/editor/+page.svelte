@@ -12,6 +12,7 @@
   import BlogPostList from '../../lib/components/BlogPostList.svelte';
 
   import ActionLog, { type Action } from '../../lib/components/ActionLog.svelte';
+  import SocialPreview from '../../lib/components/SocialPreview.svelte';
   import { postTypes, inferPostType, type PostType, type Photo } from '#lib/editor/posts.ts';
   import { frontMatterProperties } from '#lib/post-properties.ts';
 
@@ -500,6 +501,45 @@
       // Status is informational; the post itself loaded.
     }
   }
+
+  /** Where a new post will land: its Pacific publish day and its slug, or its time when untitled. */
+  function predictedPermalink(): string {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23'
+      })
+        .formatToParts(new Date(publishedAt))
+        .map(({ type, value }) => [type, value])
+    );
+    const fallback = `${parts.hour}${parts.minute}${parts.second}`;
+    return `${data.siteUrl}/${parts.year}/${parts.month}/${parts.day}/${slug || fallback}`;
+  }
+
+  // The post as the social previews see it, from the fields being edited.
+  const socialProperties = $derived({
+    ...((postType === 'article' || postType === 'bookmark') && title ? { name: [title] } : {}),
+    ...(content ? { content: [content] } : {}),
+    ...(summary ? { summary: [summary] } : {}),
+    ...(postType === 'bookmark' && bookmark ? { 'bookmark-of': [bookmark] } : {}),
+    ...(postType === 'photo' && photos.length ? { photo: photos } : {})
+  });
+  const socialPermalink = $derived.by(() => {
+    try {
+      return currentPath ? permalinkFor(currentPath) : predictedPermalink();
+    } catch {
+      return data.siteUrl ?? 'https://example.com';
+    }
+  });
+  const blueskyTarget = $derived(
+    data.syndicateTo.find((target) => target.service.name === 'Bluesky')
+  );
 
   // Targets this post isn't on yet. Drafts and hidden posts are never copied.
   const syndicationChoices = $derived(
@@ -1465,6 +1505,22 @@
         {@html previewHtml}
         {#if previewLoading}<p class="text-surface-600-400">Rendering…</p>{/if}
       </article>
+      {#if published && visibility !== 'unlisted' && visibility !== 'private'}
+        <SocialPreview
+          properties={socialProperties}
+          permalink={socialPermalink}
+          card={{
+            title: title || content.split('\n')[0].slice(0, 100),
+            description: summary,
+            image: featured || photos[0]?.value || undefined
+          }}
+          bluesky={blueskyTarget &&
+          syndicationChoices.some((target) => target.uid === blueskyTarget.uid)
+            ? { name: data.user?.name || data.user?.login || 'You', handle: blueskyTarget.user.name }
+            : undefined}
+          willPost={!!blueskyTarget && syndicateTo.includes(blueskyTarget.uid)}
+        />
+      {/if}
     {/if}
   </form>
 
