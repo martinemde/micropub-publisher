@@ -1223,7 +1223,7 @@
         <a
           href={copy}
           target="_blank"
-          rel="noopener noreferrer"
+          rel="external noopener noreferrer"
           class="py-1 text-sm text-surface-600-400 underline hover:text-surface-950-50"
           >On {data.syndicateTo.find((target) => copy.startsWith(target.service.url))?.service
             .name ?? new URL(copy).hostname}</a
