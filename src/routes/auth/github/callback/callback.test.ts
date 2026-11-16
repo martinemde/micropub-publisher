@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { GET } from './+server.ts';

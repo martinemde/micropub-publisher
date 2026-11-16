@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
 import { POST } from './+server.ts';
 import { createAuthCode } from '#lib/server/auth.ts';
